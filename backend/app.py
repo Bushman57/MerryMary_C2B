@@ -1,0 +1,60 @@
+import os
+from flask import Flask
+from flask_cors import CORS
+from database import db
+from config import config
+
+def create_app(config_name=None):
+    """Application factory"""
+    if config_name is None:
+        config_name = os.getenv('FLASK_ENV', 'development')
+    
+    app = Flask(__name__)
+    app.config.from_object(config[config_name])
+    
+    # Initialize extensions
+    db.init_app(app)
+    CORS(app)
+    
+    # Register database context
+    with app.app_context():
+        # Import models
+        from models.transaction import Transaction
+        
+        # Create database tables if they don't exist (idempotent - safe on every start)
+        db.create_all()
+    
+    # Register blueprints
+    from routes.upload import upload_bp
+    from routes.transactions import transactions_bp
+    
+    app.register_blueprint(upload_bp, url_prefix='/api')
+    app.register_blueprint(transactions_bp, url_prefix='/api')
+    
+    # Health check endpoint
+    @app.route('/api/health', methods=['GET'])
+    def health():
+        return {'status': 'ok'}, 200
+    
+    # Error handlers
+    @app.errorhandler(413)
+    def handle_file_too_large(error):
+        return {
+            'error': f'File too large (max {app.config["MAX_UPLOAD_SIZE_MB"]}MB)'
+        }, 413
+    
+    @app.errorhandler(404)
+    def handle_not_found(error):
+        return {'error': 'Resource not found'}, 404
+    
+    @app.errorhandler(500)
+    def handle_internal_error(error):
+        db.session.rollback()
+        return {'error': 'Internal server error'}, 500
+    
+    return app
+
+
+if __name__ == '__main__':
+    app = create_app()
+    app.run(debug=True, host='0.0.0.0', port=5000)

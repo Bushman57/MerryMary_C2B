@@ -1,0 +1,13 @@
+# Project root .gitignore
+.DS_Store
+Thumbs.db
+*.log
+.vscode/settings.json
+.idea/
+*.swp
+*~
+.env.local
+
+# Don't commit these files - they contain local config
+backend/.env
+frontend/.env
