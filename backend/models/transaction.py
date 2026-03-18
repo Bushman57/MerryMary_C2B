@@ -6,6 +6,17 @@ from database import db
 class Transaction(db.Model):
     """Transaction model for storing bank statement transactions"""
     __tablename__ = 'transactions'
+    __table_args__ = (
+        # Prevent duplicate transactions for the same statement
+        db.UniqueConstraint(
+            'statement_id',
+            'transaction_details',
+            'value_date',
+            'credit',
+            'debit',
+            name='uq_transactions_statement_txn',
+        ),
+    )
     
     # Primary key
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid4()))

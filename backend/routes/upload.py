@@ -2,15 +2,16 @@ from flask import Blueprint, request, jsonify, current_app
 from werkzeug.exceptions import RequestEntityTooLarge
 from pathlib import Path
 from datetime import datetime
+import hashlib
 import logging
 from uuid import uuid4
 
 from database import db
 from models.transaction import Transaction
 from utils.validators import (
-    validate_file_upload, 
-    validate_pdf_file, 
-    secure_pdf_filename
+    validate_file_upload,
+    validate_pdf_file,
+    secure_pdf_filename,
 )
 from utils.pdf_parser import TransactionExtractor, PDFParseError
 
@@ -43,16 +44,50 @@ def upload_file():
         return jsonify({'error': message}), 400
     
     try:
-        # Create unique filename
+        # Create unique filename for storage
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        statement_id = str(uuid4())[:8]
         filename = secure_pdf_filename(file.filename, timestamp)
         filepath = Path(current_app.config['UPLOAD_FOLDER']) / filename
-        
+
         # Save file
         file.save(str(filepath))
         logger.info(f"File saved: {filepath}")
-        
+
+        # Compute a stable statement_id based on PDF contents so
+        # re-uploading the same file reuses the same statement reference.
+        with open(filepath, "rb") as f:
+            file_bytes = f.read()
+        file_hash = hashlib.sha256(file_bytes).hexdigest()
+        # Use a shorter prefix for readability while remaining very unlikely to collide
+        statement_id = file_hash[:32]
+
+        # If this statement was already processed before, short-circuit and
+        # return existing transactions instead of inserting duplicates.
+        existing_q = db.session.query(Transaction).filter_by(statement_id=statement_id)
+        existing_count = existing_q.count()
+        if existing_count > 0:
+            logger.info(
+                f"Statement {statement_id} already processed, returning existing "
+                f"{existing_count} transactions"
+            )
+            filepath.unlink(missing_ok=True)
+            existing_sample = existing_q.limit(10).all()
+            return jsonify(
+                {
+                    "success": True,
+                    "statement_id": statement_id,
+                    "filename": filename,
+                    "rows_updated": 0,
+                    "transaction_count": existing_count,
+                    "duplicates_skipped": existing_count,
+                    "sample_transactions": [t.to_dict() for t in existing_sample],
+                    "message": (
+                        f"Statement already processed. Reused {existing_count} "
+                        "existing transactions."
+                    ),
+                }
+            ), 200
+
         # Validate PDF file
         is_valid, message = validate_pdf_file(str(filepath))
         if not is_valid:
@@ -81,6 +116,7 @@ def upload_file():
         
         # Store ALL extracted transactions in database in batches to avoid connection timeouts
         stored_count = 0
+        duplicate_count = 0
         batch_size = 10  # Insert in smaller batches
         try:
             for i in range(0, len(transactions), batch_size):
@@ -90,11 +126,27 @@ def upload_file():
                 
                 for idx, txn_data in enumerate(batch):
                     try:
+                        # Skip transaction if it already exists for this statement
+                        existing = Transaction.query.filter_by(
+                            statement_id=statement_id,
+                            transaction_details=txn_data['description'],
+                            value_date=txn_data['date'],
+                            credit=txn_data.get('amount') if txn_data.get('type') == 'credit' else None,
+                            debit=txn_data.get('amount') if txn_data.get('type') != 'credit' else None,
+                        ).first()
+
+                        if existing:
+                            duplicate_count += 1
+                            logger.debug(
+                                f"  ⏭️  Row {i + idx}: Skipped duplicate "
+                                f"{txn_data['date']} | {txn_data.get('amount')}"
+                            )
+                            continue
+
                         # Map extracted data to database column names
                         # Determine if amount is credit or debit based on transaction type
                         credit_amount = None
                         debit_amount = None
-                        
                         if txn_data.get('type') == 'credit':
                             credit_amount = txn_data.get('amount')
                         else:
@@ -144,7 +196,7 @@ def upload_file():
         stored_transactions = db.session.query(Transaction).filter_by(
             statement_id=statement_id
         ).limit(10).all()
-        
+
         # Return success response with row count
         return jsonify({
             'success': True,
@@ -152,8 +204,13 @@ def upload_file():
             'filename': filename,
             'rows_updated': stored_count,
             'transaction_count': stored_count,
+            'duplicates_skipped': duplicate_count,
             'sample_transactions': [t.to_dict() for t in stored_transactions],
-            'message': f'✓ Successfully extracted and stored {stored_count} transactions in Neon database'
+            'message': (
+                f'✓ Stored {stored_count} new transactions'
+                + (f', skipped {duplicate_count} duplicates' if duplicate_count else '')
+                + ' in Neon database'
+            )
         }), 200
     
     except RequestEntityTooLarge:

@@ -11,28 +11,37 @@
     <!-- Upload Zone (single-step upload to Neon DB) -->
     <div 
       class="upload-zone"
-      :class="{ dragging: isDragging, uploading: isUploading }"
+      :class="{ dragging: isDragging, uploading: isUploading, disabled: disabled }"
       @dragover.prevent="isDragging = true"
       @dragleave.prevent="isDragging = false"
-      @drop.prevent="handleDrop"
+      @drop.prevent="!isInteractionDisabled && handleDrop($event)"
     >
       <input
         ref="fileInput"
         type="file"
         accept=".pdf"
         hidden
+        :disabled="isInteractionDisabled"
         @change="handleFileSelect"
       />
       
       <div v-if="!isUploading" class="upload-content">
         <div class="upload-icon">📂</div>
         <p class="upload-text">
-          <button @click="$refs.fileInput?.click()" class="link-button">
+          <button
+            class="link-button"
+            type="button"
+            :disabled="isInteractionDisabled"
+            @click="!isInteractionDisabled && $refs.fileInput?.click()"
+          >
             Click to upload
           </button>
           or drag and drop
         </p>
-        <p class="upload-hint">PDF files up to 10MB</p>
+        <p class="upload-hint">
+          PDF files up to 10MB
+          <span v-if="disabled"> · Waiting for server to be ready…</span>
+        </p>
       </div>
       
       <!-- Progress Bar -->
@@ -47,8 +56,15 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { uploadPDF } from '../utils/api'
+
+const props = defineProps({
+  disabled: {
+    type: Boolean,
+    default: false,
+  },
+})
 
 const fileInput = ref(null)
 const isDragging = ref(false)
@@ -59,6 +75,8 @@ const message = ref('')
 const messageType = ref('error')
 
 const emit = defineEmits(['upload-success'])
+
+const isInteractionDisabled = computed(() => props.disabled || isUploading.value)
 
 async function handleFileSelect(event) {
   const file = event.target.files?.[0]
@@ -95,7 +113,14 @@ async function uploadFile(file) {
   message.value = ''
   
   try {
-    const response = await uploadPDF(file)
+    const response = await uploadPDF(file, (percent) => {
+      // Guard against NaN or unexpected values
+      if (Number.isFinite(percent)) {
+        uploadProgress.value = Math.min(100, Math.max(0, percent))
+      }
+    })
+    // Ensure progress bar shows complete state before hiding
+    uploadProgress.value = 100
     isUploading.value = false
     message.value = response.message || '✓ Successfully stored transactions in Neon database'
     messageType.value = 'success'

@@ -53,7 +53,8 @@
           :disabled="!canApply || isLoading"
           @click="applyFilters"
         >
-          {{ isLoading ? 'Loading...' : 'Apply filters' }}
+          <span v-if="isLoading" class="btn-spinner"></span>
+          <span>{{ isLoading ? 'Loading…' : 'Apply filters' }}</span>
         </button>
         <span v-if="errorMessage" class="error-text">{{ errorMessage }}</span>
       </div>
@@ -242,11 +243,29 @@ function formatAmount(amount) {
   font-weight: 600;
   cursor: pointer;
   font-size: 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .apply-btn:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+.btn-spinner {
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  border: 2px solid rgba(255, 255, 255, 0.4);
+  border-top-color: #fff;
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .error-text {

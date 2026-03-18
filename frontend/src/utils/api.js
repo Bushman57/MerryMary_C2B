@@ -5,19 +5,24 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000
 const api = axios.create({
   baseURL: API_BASE_URL,
   headers: {
-    'Content-Type': 'application/json'
-  }
+    'Content-Type': 'application/json',
+  },
 })
 
-export const uploadPDF = async (file) => {
+export const uploadPDF = async (file, onProgress) => {
   const formData = new FormData()
   formData.append('file', file)
   
   try {
     const response = await api.post('/upload', formData, {
       headers: {
-        'Content-Type': 'multipart/form-data'
-      }
+        'Content-Type': 'multipart/form-data',
+      },
+      onUploadProgress: (event) => {
+        if (!onProgress || !event.total) return
+        const percent = Math.round((event.loaded / event.total) * 100)
+        onProgress(percent)
+      },
     })
     return response.data
   } catch (error) {

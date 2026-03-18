@@ -1,14 +1,16 @@
 #!/usr/bin/env python
 """Direct SQL migration to fix database schema"""
-import psycopg2
-from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
+import psycopg2  # pyright: ignore[reportMissingModuleSource]
+from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT  # pyright: ignore[reportMissingModuleSource]
 import os
 
 def migrate_database():
     """Drop and recreate transactions table with correct schema"""
     
     # Get database URL from environment
-    db_url = os.getenv('DATABASE_URL')
+    # db_url = os.getenv('DATABASE_URL')
+    db_url = 'postgresql://neondb_owner:npg_rx0mYbzltKi3@ep-orange-water-a1a2mcgr-pooler.ap-southeast-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require'
+    print(db_url)
     if not db_url:
         print("❌ DATABASE_URL not found in .env file")
         return False
@@ -55,6 +57,13 @@ def migrate_database():
         cursor.execute("CREATE INDEX idx_value_date ON transactions(value_date)")
         cursor.execute("CREATE INDEX idx_phone_number ON transactions(phone_number)")
         cursor.execute("CREATE INDEX idx_statement_id ON transactions(statement_id)")
+        # Uniqueness constraint to prevent duplicate transactions for the same statement
+        cursor.execute(
+            """
+            CREATE UNIQUE INDEX uq_transactions_statement_txn
+            ON transactions(statement_id, transaction_details, value_date, credit, debit)
+            """
+        )
         print("✓ Indexes created")
         
         cursor.close()
