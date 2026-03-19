@@ -75,7 +75,7 @@ import { useAppStore } from './store/index'
 import FileUpload from './components/FileUpload.vue'
 import TransactionTable from './components/TransactionTable.vue'
 import AnalyticsView from './components/AnalyticsView.vue'
-import { getStatementTransactions } from './utils/api'
+import { getHealth, getStatementTransactions } from './utils/api'
 
 const store = useAppStore()
 const activeTab = ref('load')
@@ -88,13 +88,10 @@ async function checkBackendHealth(retries = 10, delayMs = 1500) {
 
   for (let attempt = 0; attempt < retries; attempt++) {
     try {
-      const res = await fetch('/api/health')
-      if (res.ok) {
-        const data = await res.json().catch(() => ({}))
-        if (data.status === 'ok' || res.ok) {
-          isBackendReady.value = true
-          break
-        }
+      const data = await getHealth()
+      if (data && data.status === 'ok') {
+        isBackendReady.value = true
+        break
       }
     } catch (e) {
       // ignore and retry

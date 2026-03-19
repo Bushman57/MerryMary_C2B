@@ -1,6 +1,6 @@
 import axios from 'axios'
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api'
+export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api'
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -27,6 +27,15 @@ export const uploadPDF = async (file, onProgress) => {
     return response.data
   } catch (error) {
     throw error.response?.data || { error: 'Upload failed' }
+  }
+}
+
+export const getHealth = async () => {
+  try {
+    const response = await api.get('/health')
+    return response.data
+  } catch (error) {
+    throw error.response?.data || { error: 'Health check failed' }
   }
 }
 
