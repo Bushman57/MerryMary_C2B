@@ -8,8 +8,7 @@ def migrate_database():
     """Drop and recreate transactions table with correct schema"""
     
     # Get database URL from environment
-    # db_url = os.getenv('DATABASE_URL')
-    db_url = 'postgresql://neondb_owner:npg_rx0mYbzltKi3@ep-orange-water-a1a2mcgr-pooler.ap-southeast-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require'
+    db_url = os.getenv('DATABASE_URL')
     print(db_url)
     if not db_url:
         print("❌ DATABASE_URL not found in .env file")
