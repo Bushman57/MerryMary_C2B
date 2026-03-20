@@ -28,7 +28,7 @@
             id="phone"
             type="text"
             v-model="phone"
-            placeholder="e.g. 0766200372"
+            placeholder="e.g. 07*******"
           />
         </div>
         <div class="filter-group">
