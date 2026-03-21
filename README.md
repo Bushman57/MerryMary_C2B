@@ -10,6 +10,7 @@ A web application for uploading PDF bank statements, extracting transaction data
 ✅ **Data Persistence** - Store transactions in Neon PostgreSQL  
 ✅ **Responsive UI** - Modern Vue 3 interface with real-time filtering  
 ✅ **Transaction Statistics** - Summary stats and analytics  
+✅ **Google Sign-In** - Firebase Authentication; API routes verify ID tokens with Firebase Admin  
 
 ## Tech Stack
 
@@ -25,6 +26,7 @@ A web application for uploading PDF bank statements, extracting transaction data
 - **Pinia** - State management
 - **Vite** - Build tool
 - **Axios** - HTTP client
+- **Firebase** - Google Sign-In on the client
 - **CSS3** - Styling with flexbox/grid
 
 ## Project Structure
@@ -43,7 +45,8 @@ transaction_history/
 │   │   └── transactions.py    # GET /api/transactions, filtering, stats
 │   └── utils/                 # Utility functions
 │       ├── pdf_parser.py      # PDF extraction with phone regex
-│       └── validators.py      # File & PDF validators
+│       ├── validators.py      # File & PDF validators
+│       └── firebase_auth.py   # Firebase Admin token verification
 │
 ├── frontend/                   # Vue 3 SPA
 │   ├── index.html             # HTML entry point
@@ -57,7 +60,9 @@ transaction_history/
 │       │   ├── FileUpload.vue # Drag-drop upload
 │       │   └── TransactionTable.vue # Table with filters
 │       ├── store/             # Pinia state management
-│       │   └── index.js       # App store (transactions, filters)
+│       │   ├── index.js       # App store (transactions, filters)
+│       │   └── auth.js        # Firebase auth + ID token for API
+│       ├── firebase.js        # Firebase client initialization
 │       └── utils/             # Utilities
 │           └── api.js         # Axios API client
 │
@@ -107,6 +112,12 @@ transaction_history/
    # DATABASE_URL=postgresql://... (from Neon)
    ```
 
+   **Firebase Admin (production or full local testing)**  
+   - In [Firebase Console](https://console.firebase.google.com), create a project, enable **Authentication → Google**, and add a **Web** app to get client config for the frontend.  
+   - In Project settings → **Service accounts**, generate a new private key (JSON).  
+   - Backend: set either `GOOGLE_APPLICATION_CREDENTIALS` to that JSON file path, or paste the JSON as a single line in `FIREBASE_CREDENTIALS_JSON` (common on Render).  
+   - For local quick testing **without** Firebase, set `FIREBASE_AUTH_DISABLED=true` in `backend/.env` (do not use in production).
+
 6. **Start Flask server**
    ```bash
    python app.py
@@ -119,6 +130,10 @@ transaction_history/
    ```bash
    cd transaction_history/frontend
    ```
+
+   Copy `frontend/.env.example` to `frontend/.env` and set:
+   - `VITE_API_BASE_URL` (e.g. `http://localhost:5000/api` or your Render API URL with `/api`)
+   - `VITE_FIREBASE_*` values from Firebase Console → Project settings → Your apps (Web).
 
 2. **Install dependencies**
    ```bash
@@ -225,7 +240,7 @@ CREATE TABLE transactions (
 
 ## Next Steps / Future Enhancements
 
-- [ ] User authentication and sessions
+- [x] User authentication (Firebase Google Sign-In + Admin token verification on API)
 - [ ] Transaction categorization (auto-categorize by merchant)
 - [ ] CSV/Excel export
 - [ ] Duplicate detection across statements

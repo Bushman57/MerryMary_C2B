@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { useAuthStore } from '../store/auth'
 
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api'
 
@@ -8,6 +9,33 @@ const api = axios.create({
     'Content-Type': 'application/json',
   },
 })
+
+api.interceptors.request.use((config) => {
+  try {
+    const authStore = useAuthStore()
+    const token = authStore.idToken
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`
+    }
+  } catch {
+    /* Pinia not ready */
+  }
+  return config
+})
+
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      try {
+        useAuthStore().handleUnauthorized()
+      } catch {
+        /* ignore */
+      }
+    }
+    return Promise.reject(error)
+  }
+)
 
 export const uploadPDF = async (file, onProgress) => {
   const formData = new FormData()
@@ -36,6 +64,15 @@ export const getHealth = async () => {
     return response.data
   } catch (error) {
     throw error.response?.data || { error: 'Health check failed' }
+  }
+}
+
+export const getMe = async () => {
+  try {
+    const response = await api.get('/me')
+    return response.data
+  } catch (error) {
+    throw error.response?.data || { error: 'Failed to load profile' }
   }
 }
 

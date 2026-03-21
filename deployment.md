@@ -78,6 +78,11 @@ No extra packages are required for Render.
 - `FLASK_ENV=production`
 - `DATABASE_URL=<your Neon connection string>`
 - Any other config used by `backend/config.py` (e.g. `SECRET_KEY`, `MAX_UPLOAD_SIZE_MB`, etc.).
+- **Firebase Admin (required for auth in production)**  
+  - `FIREBASE_CREDENTIALS_JSON` — paste the full Firebase **service account** JSON as a **single line** (from Firebase Console → Project settings → Service accounts → Generate new private key).  
+  - Optional: `ALLOWED_FIREBASE_UIDS` — comma-separated Firebase Auth **UIDs** (preferred; leave unset to allow any signed-in user, or use `ALLOWED_EMAILS` if UIDs are not set).
+  - Optional: `ALLOWED_EMAILS` — comma-separated emails (used only when `ALLOWED_FIREBASE_UIDS` is empty).  
+  - Do **not** set `FIREBASE_AUTH_DISABLED` in production.
 
 5. Click **Create Web Service** and wait for deployment.
 
@@ -96,6 +101,22 @@ Verify the backend is healthy:
 - `GET https://your-backend.onrender.com/api/health`  
   should return:
   - `{"status": "ok"}` with HTTP 200.
+
+### 2.5. Firebase + Google Sign-In
+
+1. In [Firebase Console](https://console.firebase.google.com), create or select a project.
+2. **Authentication** → Sign-in method → enable **Google**.
+3. **Authentication** → Settings → Authorized domains: add your Vercel domain (and `localhost` for dev).
+4. Add a **Web** app under Project settings; copy the config values into Vercel env vars (see §3.3).
+5. **Project settings → Service accounts** → generate a private key JSON; store it in Render as `FIREBASE_CREDENTIALS_JSON` (single line).
+
+Protected API routes (`/api/upload`, `/api/transactions`, `/api/statements`, etc.) require a valid Firebase ID token:
+
+- Header: `Authorization: Bearer <id_token>`  
+- The Vue app attaches this automatically after Google Sign-In.
+
+Public route (no token): `GET /api/health`.  
+Profile check (requires token): `GET /api/me`.
 
 ---
 
@@ -133,6 +154,20 @@ After deployment, the frontend will call the Render backend via:
 - `POST /upload` → `https://your-backend.onrender.com/api/upload`
 - `GET /statements/<statement_id>` → `https://your-backend.onrender.com/api/statements/<statement_id>`
 - `GET /transactions` for analytics, with query parameters.
+
+### 3.3. Firebase client env vars (Vercel)
+
+Add these in **Settings → Environment Variables** (same environments as `VITE_API_BASE_URL`):
+
+| Name | Source |
+|------|--------|
+| `VITE_FIREBASE_API_KEY` | Firebase Web app config |
+| `VITE_FIREBASE_AUTH_DOMAIN` | Firebase Web app config |
+| `VITE_FIREBASE_PROJECT_ID` | Firebase Web app config |
+| `VITE_FIREBASE_APP_ID` | Firebase Web app config |
+| `VITE_FIREBASE_MESSAGING_SENDER_ID` | Firebase Web app config (if shown) |
+
+Redeploy after adding variables so Vite embeds them at build time.
 
 ---
 

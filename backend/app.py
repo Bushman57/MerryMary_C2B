@@ -1,5 +1,5 @@
 import os
-from flask import Flask
+from flask import Flask, jsonify, request
 from flask_cors import CORS
 from database import db
 from config import config
@@ -24,17 +24,42 @@ def create_app(config_name=None):
         # Create database tables if they don't exist (idempotent - safe on every start)
         db.create_all()
     
+    # Firebase Admin (verify Google Sign-In tokens)
+    from utils.firebase_auth import init_firebase_admin, register_protected_blueprint_guards, verify_bearer_token
+
+    with app.app_context():
+        init_firebase_admin()
+
     # Register blueprints
     from routes.upload import upload_bp
     from routes.transactions import transactions_bp
-    
+
+    register_protected_blueprint_guards(upload_bp, transactions_bp)
+
     app.register_blueprint(upload_bp, url_prefix='/api')
     app.register_blueprint(transactions_bp, url_prefix='/api')
-    
-    # Health check endpoint
+
+    # Health check endpoint (public)
     @app.route('/api/health', methods=['GET'])
     def health():
         return {'status': 'ok'}, 200
+
+    @app.route('/api/me', methods=['GET', 'OPTIONS'])
+    def api_me():
+        """Return current user from verified Firebase ID token (requires Bearer token)."""
+        if request.method == 'OPTIONS':
+            return '', 204
+        err = verify_bearer_token()
+        if err is not None:
+            return err[0], err[1]
+        u = getattr(request, 'firebase_user', {}) or {}
+        return jsonify(
+            {
+                'uid': u.get('uid') or u.get('user_id'),
+                'email': u.get('email'),
+                'email_verified': u.get('email_verified', False),
+            }
+        ), 200
     
     # Error handlers
     @app.errorhandler(413)

@@ -9,6 +9,7 @@
             id="start-date"
             type="date"
             v-model="startDate"
+            :disabled="disabled"
           />
         </div>
         <div class="filter-group">
@@ -17,6 +18,7 @@
             id="end-date"
             type="date"
             v-model="endDate"
+            :disabled="disabled"
           />
         </div>
       </div>
@@ -29,18 +31,19 @@
             type="text"
             v-model="phone"
             placeholder="e.g. 07*******"
+            :disabled="disabled"
           />
         </div>
         <div class="filter-group">
           <label for="sort-by">Sort by</label>
-          <select id="sort-by" v-model="sortBy">
+          <select id="sort-by" v-model="sortBy" :disabled="disabled">
             <option value="value_date">Value Date</option>
             <option value="credit">Credit (In)</option>
           </select>
         </div>
         <div class="filter-group sort-order">
           <label>&nbsp;</label>
-          <button type="button" @click="toggleSortOrder">
+          <button type="button" :disabled="disabled" @click="toggleSortOrder">
             {{ sortOrder === 'desc' ? '↓ Desc' : '↑ Asc' }}
           </button>
         </div>
@@ -50,7 +53,7 @@
         <button
           type="button"
           class="apply-btn"
-          :disabled="!canApply || isLoading"
+          :disabled="disabled || !canApply || isLoading"
           @click="applyFilters"
         >
           <span v-if="isLoading" class="btn-spinner"></span>
@@ -101,6 +104,13 @@
 <script setup>
 import { ref, computed } from 'vue'
 import { getTransactions } from '../utils/api'
+
+const props = defineProps({
+  disabled: {
+    type: Boolean,
+    default: false,
+  },
+})
 
 const startDate = ref('')
 const endDate = ref('')

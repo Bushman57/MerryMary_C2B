@@ -39,6 +39,29 @@ class Config:
     SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
     JSON_SORT_KEYS = False
 
+    # Firebase Admin (Google Sign-In ID token verification)
+    # Set FIREBASE_CREDENTIALS_JSON to the full service account JSON as a single-line string (Render).
+    # Or set GOOGLE_APPLICATION_CREDENTIALS to a path to the JSON file (local).
+    # For local dev without Firebase, set FIREBASE_AUTH_DISABLED=true
+    FIREBASE_CREDENTIALS_JSON = os.getenv('FIREBASE_CREDENTIALS_JSON')
+    FIREBASE_AUTH_DISABLED = os.getenv('FIREBASE_AUTH_DISABLED', '').lower() in (
+        '1',
+        'true',
+        'yes',
+    )
+    ALLOWED_EMAILS = [
+        e.strip().lower()
+        for e in os.getenv('ALLOWED_EMAILS', '').split(',')
+        if e.strip()
+    ]
+    # Comma-separated Firebase Auth UIDs (from Firebase Console → Authentication → Users).
+    # If non-empty, only these users may call protected APIs (takes precedence over ALLOWED_EMAILS).
+    ALLOWED_FIREBASE_UIDS = [
+        u.strip()
+        for u in os.getenv('ALLOWED_FIREBASE_UIDS', '').split(',')
+        if u.strip()
+    ]
+
 
 class DevelopmentConfig(Config):
     """Development configuration"""

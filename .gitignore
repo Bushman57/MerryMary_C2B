@@ -11,3 +11,9 @@ Thumbs.db
 # Don't commit these files - they contain local config
 backend/.env
 frontend/.env
+backend/transc_env
+
+# Firebase / Google Cloud service account keys (never commit — triggers GitHub secret scanning)
+backend/Credentials.json
+**/Credentials.json
+**/firebase-adminsdk*.json
