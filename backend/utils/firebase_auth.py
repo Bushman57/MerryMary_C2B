@@ -15,24 +15,53 @@ logger = logging.getLogger(__name__)
 _initialized = False
 
 
+def _resolve_service_account_path() -> Optional[str]:
+    """
+    Path to Firebase service account JSON file.
+    Render mounts secret files at /etc/secrets/<filename>; set FIREBASE_CREDENTIALS_PATH to that path.
+    """
+    for source in (
+        (os.environ.get("FIREBASE_CREDENTIALS_PATH") or "").strip(),
+        (current_app.config.get("FIREBASE_CREDENTIALS_PATH") or "").strip(),
+    ):
+        if source and os.path.isfile(source):
+            return source
+
+    gac = (os.environ.get("GOOGLE_APPLICATION_CREDENTIALS") or "").strip()
+    if gac and os.path.isfile(gac):
+        return gac
+
+    return None
+
+
 def _get_credential():
     """Build credentials from env. Returns None if not configured."""
-    cred_json = current_app.config.get("FIREBASE_CREDENTIALS_JSON")
+    from firebase_admin import credentials
+
+    path = _resolve_service_account_path()
+    if path:
+        try:
+            return credentials.Certificate(path)
+        except Exception as e:
+            logger.error("Failed to load Firebase credentials from %s: %s", path, e)
+            return None
+
+    cred_json = (os.environ.get("FIREBASE_CREDENTIALS_JSON") or "").strip()
+    if not cred_json:
+        cfg = current_app.config.get("FIREBASE_CREDENTIALS_JSON")
+        cred_json = (cfg or "").strip() if isinstance(cfg, str) else ""
+
     if cred_json:
         try:
             info = json.loads(cred_json)
         except json.JSONDecodeError as e:
             logger.error("FIREBASE_CREDENTIALS_JSON is not valid JSON: %s", e)
             return None
-        from firebase_admin import credentials
-
-        return credentials.Certificate(info)
-
-    cred_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
-    if cred_path and os.path.isfile(cred_path):
-        from firebase_admin import credentials
-
-        return credentials.Certificate(cred_path)
+        try:
+            return credentials.Certificate(info)
+        except Exception as e:
+            logger.error("FIREBASE_CREDENTIALS_JSON could not build credentials: %s", e)
+            return None
 
     return None
 
@@ -55,14 +84,19 @@ def init_firebase_admin() -> None:
     cred = _get_credential()
     if cred is None:
         logger.error(
-            "Firebase Admin not initialized: set FIREBASE_CREDENTIALS_JSON or "
+            "Firebase Admin not initialized: set FIREBASE_CREDENTIALS_PATH (e.g. "
+            "/etc/secrets/your_file.json on Render), FIREBASE_CREDENTIALS_JSON, or "
             "GOOGLE_APPLICATION_CREDENTIALS to a service account JSON file path"
         )
         return
 
     firebase_admin.initialize_app(cred)
     _initialized = True
-    logger.info("Firebase Admin SDK initialized")
+    p = _resolve_service_account_path()
+    logger.info(
+        "Firebase Admin SDK initialized%s",
+        f" (service account file: {p})" if p else " (inline JSON)",
+    )
 
 
 def is_auth_effective() -> bool:
@@ -100,7 +134,8 @@ def verify_bearer_token() -> Optional[Tuple[Any, int]]:
             jsonify(
                 {
                     "error": "Server authentication not configured",
-                    "detail": "Set FIREBASE_CREDENTIALS_JSON or GOOGLE_APPLICATION_CREDENTIALS",
+                    "detail": "Set FIREBASE_CREDENTIALS_PATH (Render: /etc/secrets/...), "
+                    "FIREBASE_CREDENTIALS_JSON, or GOOGLE_APPLICATION_CREDENTIALS",
                 }
             ),
             503,

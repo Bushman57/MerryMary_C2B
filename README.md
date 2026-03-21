@@ -115,7 +115,7 @@ transaction_history/
    **Firebase Admin (production or full local testing)**  
    - In [Firebase Console](https://console.firebase.google.com), create a project, enable **Authentication → Google**, and add a **Web** app to get client config for the frontend.  
    - In Project settings → **Service accounts**, generate a new private key (JSON).  
-   - Backend: set either `GOOGLE_APPLICATION_CREDENTIALS` to that JSON file path, or paste the JSON as a single line in `FIREBASE_CREDENTIALS_JSON` (common on Render).  
+   - Backend: set `FIREBASE_CREDENTIALS_PATH` to the JSON file path (on Render, secret files are under `/etc/secrets/...`), or set `GOOGLE_APPLICATION_CREDENTIALS` to a local file path, or paste the JSON as one line in `FIREBASE_CREDENTIALS_JSON`.  
    - For local quick testing **without** Firebase, set `FIREBASE_AUTH_DISABLED=true` in `backend/.env` (do not use in production).
 
 6. **Start Flask server**

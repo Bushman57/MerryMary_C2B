@@ -40,9 +40,10 @@ class Config:
     JSON_SORT_KEYS = False
 
     # Firebase Admin (Google Sign-In ID token verification)
-    # Set FIREBASE_CREDENTIALS_JSON to the full service account JSON as a single-line string (Render).
-    # Or set GOOGLE_APPLICATION_CREDENTIALS to a path to the JSON file (local).
+    # Prefer FIREBASE_CREDENTIALS_PATH on Render (secret file under /etc/secrets/...).
+    # Or FIREBASE_CREDENTIALS_JSON (single-line JSON), or GOOGLE_APPLICATION_CREDENTIALS (file path).
     # For local dev without Firebase, set FIREBASE_AUTH_DISABLED=true
+    FIREBASE_CREDENTIALS_PATH = os.getenv('FIREBASE_CREDENTIALS_PATH')
     FIREBASE_CREDENTIALS_JSON = os.getenv('FIREBASE_CREDENTIALS_JSON')
     FIREBASE_AUTH_DISABLED = os.getenv('FIREBASE_AUTH_DISABLED', '').lower() in (
         '1',

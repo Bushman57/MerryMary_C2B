@@ -79,7 +79,10 @@ No extra packages are required for Render.
 - `DATABASE_URL=<your Neon connection string>`
 - Any other config used by `backend/config.py` (e.g. `SECRET_KEY`, `MAX_UPLOAD_SIZE_MB`, etc.).
 - **Firebase Admin (required for auth in production)**  
-  - `FIREBASE_CREDENTIALS_JSON` — paste the full Firebase **service account** JSON as a **single line** (from Firebase Console → Project settings → Service accounts → Generate new private key).  
+  - **Recommended (Render secret file):** In the Render dashboard add a **Secret File** with your Firebase service account JSON (from Firebase Console → Project settings → Service accounts → Generate new private key). Files are mounted under **`/etc/secrets/`** using the filename you choose (e.g. `/etc/secrets/firebase_service_account.json`). Set:  
+    - `FIREBASE_CREDENTIALS_PATH=/etc/secrets/firebase_service_account.json`  
+  - **Alternative:** `FIREBASE_CREDENTIALS_JSON` — paste the same JSON as a **single line**.  
+  - **Alternative:** `GOOGLE_APPLICATION_CREDENTIALS` — absolute path to the JSON file (common locally).  
   - Optional: `ALLOWED_FIREBASE_UIDS` — comma-separated Firebase Auth **UIDs** (preferred; leave unset to allow any signed-in user, or use `ALLOWED_EMAILS` if UIDs are not set).
   - Optional: `ALLOWED_EMAILS` — comma-separated emails (used only when `ALLOWED_FIREBASE_UIDS` is empty).  
   - Do **not** set `FIREBASE_AUTH_DISABLED` in production.
@@ -108,7 +111,7 @@ Verify the backend is healthy:
 2. **Authentication** → Sign-in method → enable **Google**.
 3. **Authentication** → Settings → Authorized domains: add your Vercel domain (and `localhost` for dev).
 4. Add a **Web** app under Project settings; copy the config values into Vercel env vars (see §3.3).
-5. **Project settings → Service accounts** → generate a private key JSON; store it in Render as `FIREBASE_CREDENTIALS_JSON` (single line).
+5. **Project settings → Service accounts** → generate a private key JSON. On Render, upload it as a **Secret File** and set `FIREBASE_CREDENTIALS_PATH=/etc/secrets/<your_filename>.json`, or paste the minified JSON into `FIREBASE_CREDENTIALS_JSON`.
 
 Protected API routes (`/api/upload`, `/api/transactions`, `/api/statements`, etc.) require a valid Firebase ID token:
 
