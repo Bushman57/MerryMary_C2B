@@ -70,14 +70,17 @@ No extra packages are required for Render.
 - **Start Command**:
 
   ```bash
-  cd backend && gunicorn "app:create_app()"
+  cd backend && gunicorn --bind 0.0.0.0:$PORT --workers 1 "app:create_app()"
   ```
+
+  Use a single worker unless you need more processes for CPU-bound load (each worker repeats cold boot cost). Optional: add `--threads 2` for extra I/O concurrency without a second worker.
 
 4. Set **Environment Variables** (Render dashboard → Settings → Environment):
 
 - `FLASK_ENV=production`
 - `DATABASE_URL=<your Neon connection string>`
 - Any other config used by `backend/config.py` (e.g. `SECRET_KEY`, `MAX_UPLOAD_SIZE_MB`, etc.).
+- **Schema / cold boot:** Production skips `db.create_all()` on startup (faster cold starts). Create or migrate tables with [`backend/migrate_direct.py`](backend/migrate_direct.py), [`backend/migrate.py`](backend/migrate.py), or [`backend/scripts/dedupe_transaction_url.py`](backend/scripts/dedupe_transaction_url.py) as documented in the README. To force SQLAlchemy `create_all()` on boot (e.g. empty greenfield DB), set `ENABLE_DB_CREATE_ALL=true` once, then remove it.
 - **Firebase Admin (required for auth in production)**  
   - **Recommended (Render secret file):** In the Render dashboard add a **Secret File** with your Firebase service account JSON (from Firebase Console → Project settings → Service accounts → Generate new private key). Files are mounted under **`/etc/secrets/`** using the filename you choose (e.g. `/etc/secrets/firebase_service_account.json`). Set:  
     - `FIREBASE_CREDENTIALS_PATH=/etc/secrets/firebase_service_account.json`  
@@ -268,7 +271,7 @@ So locally you do **not** need `VITE_API_BASE_URL`; `/api` is forwarded directly
    - [ ] `backend/requirements.txt` includes `gunicorn`, `Flask`, `Flask-Cors`, `Flask-SQLAlchemy`, `psycopg2-binary`.
    - [ ] Render Web Service configured with:
      - Build: `cd backend && pip install -r requirements.txt`
-     - Start: `cd backend && gunicorn "app:create_app()"`
+     - Start: `cd backend && gunicorn --bind 0.0.0.0:$PORT --workers 1 "app:create_app()"`
    - [ ] Env vars set: `DATABASE_URL`, `FLASK_ENV`, `SECRET_KEY`, etc.
    - [ ] `GET /api/health` works on the Render URL.
 

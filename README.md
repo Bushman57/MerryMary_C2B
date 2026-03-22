@@ -126,6 +126,8 @@ transaction_history/
    ```
    Server runs on `http://localhost:5000`
 
+   **Production (e.g. Render):** Gunicorn should bind to `$PORT` and typically use `--workers 1` for faster cold boots; see [deployment.md](deployment.md). With `FLASK_ENV=production`, the app does not run `db.create_all()` on startup unless you set `ENABLE_DB_CREATE_ALL=true`.
+
 ### Frontend Setup
 
 1. **Open new terminal and navigate to frontend**

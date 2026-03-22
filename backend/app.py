@@ -16,13 +16,12 @@ def create_app(config_name=None):
     db.init_app(app)
     CORS(app)
     
-    # Register database context
+    # Register models; optional create_all (skipped in production by default — faster cold boot)
     with app.app_context():
-        # Import models
-        from models.transaction import Transaction
-        
-        # Create database tables if they don't exist (idempotent - safe on every start)
-        db.create_all()
+        from models.transaction import Transaction  # noqa: F401 — register model
+
+        if app.config.get('ENABLE_DB_CREATE_ALL'):
+            db.create_all()
     
     # Firebase Admin (verify Google Sign-In tokens)
     from utils.firebase_auth import init_firebase_admin, register_protected_blueprint_guards, verify_bearer_token

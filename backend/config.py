@@ -4,6 +4,15 @@ from pathlib import Path
 
 load_dotenv()
 
+
+def _parse_enable_db_create_all(default: bool) -> bool:
+    """ENABLE_DB_CREATE_ALL env overrides; if unset, use default (True in dev, False in prod)."""
+    v = os.getenv('ENABLE_DB_CREATE_ALL')
+    if v is None or not str(v).strip():
+        return default
+    return str(v).lower() in ('1', 'true', 'yes')
+
+
 class Config:
     """Base configuration"""
     BASE_DIR = Path(__file__).parent
@@ -68,18 +77,21 @@ class DevelopmentConfig(Config):
     """Development configuration"""
     DEBUG = True
     TESTING = False
+    ENABLE_DB_CREATE_ALL = _parse_enable_db_create_all(True)
 
 
 class ProductionConfig(Config):
     """Production configuration"""
     DEBUG = False
     TESTING = False
+    ENABLE_DB_CREATE_ALL = _parse_enable_db_create_all(False)
 
 
 class TestingConfig(Config):
     """Testing configuration"""
     TESTING = True
     SQLALCHEMY_DATABASE_URI = 'sqlite:///:memory:'
+    ENABLE_DB_CREATE_ALL = _parse_enable_db_create_all(True)
 
 
 config = {
