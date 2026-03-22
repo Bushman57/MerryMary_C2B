@@ -33,7 +33,7 @@ class TransactionExtractor:
     
     @staticmethod
     def extract_phone_from_text(text: str) -> Optional[str]:
-        """
+        r"""
         Extract phone number from text using regex pattern 0\d{9}
         
         Args:
@@ -47,6 +47,17 @@ class TransactionExtractor:
         
         match = TransactionExtractor.PHONE_REGEX.search(str(text))
         return match.group(0) if match else None
+
+    @staticmethod
+    def extract_third_token_from_details(text: Optional[str]) -> Optional[str]:
+        """Third whitespace-separated token from transaction details (canonical id)."""
+        if text is None:
+            return None
+        s = str(text).strip()
+        if not s:
+            return None
+        parts = s.split()
+        return parts[2] if len(parts) >= 3 else None
     
     @staticmethod
     def parse_date(date_str: str) -> Optional[str]:
@@ -269,6 +280,9 @@ class TransactionExtractor:
                 "balance": balance_value,
                 "reference": reference,
                 "phone_number": phone_number,
+                "transaction_url": TransactionExtractor.extract_third_token_from_details(
+                    full_details
+                ),
                 "transactional_details": full_details,
                 "raw_data": {
                     "lines": current_details,
@@ -598,6 +612,9 @@ class TransactionExtractor:
                 'balance': balance,
                 'reference': payment_reference,
                 'phone_number': phone_number,
+                'transaction_url': TransactionExtractor.extract_third_token_from_details(
+                    transaction_details
+                ),
                 'transactional_details': transaction_details,
                 'raw_data': row,
                 'statement_id': statement_id,

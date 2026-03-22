@@ -1,5 +1,7 @@
 from datetime import datetime
 from uuid import uuid4
+from sqlalchemy import Index, text
+
 from database import db
 
 
@@ -7,14 +9,11 @@ class Transaction(db.Model):
     """Transaction model for storing bank statement transactions"""
     __tablename__ = 'transactions'
     __table_args__ = (
-        # Prevent duplicate transactions for the same statement
-        db.UniqueConstraint(
-            'statement_id',
-            'transaction_details',
-            'value_date',
-            'credit',
-            'debit',
-            name='uq_transactions_statement_txn',
+        Index(
+            'uq_transactions_transaction_url',
+            'transaction_url',
+            unique=True,
+            postgresql_where=text('transaction_url IS NOT NULL'),
         ),
     )
     
@@ -31,6 +30,9 @@ class Transaction(db.Model):
     
     # Extracted phone number from transaction details
     phone_number = db.Column(db.String(20), index=True)
+
+    # Third token from transaction details; global unique identity when set
+    transaction_url = db.Column(db.String(255), nullable=True)
     
     # Raw data from PDF extraction
     raw_data = db.Column(db.JSON)
@@ -62,6 +64,7 @@ class Transaction(db.Model):
             'debit': self.debit,
             'balance': self.balance,
             'phone_number': self.phone_number,
+            'transaction_url': self.transaction_url,
             'statement_id': self.statement_id,
             'metadata': {
                 'confidence': self.confidence,

@@ -37,6 +37,7 @@ def migrate_database():
             debit FLOAT,
             balance FLOAT,
             phone_number VARCHAR(20),
+            transaction_url VARCHAR(255),
             raw_data JSONB,
             statement_id VARCHAR(100),
             confidence FLOAT DEFAULT 1.0,
@@ -56,11 +57,11 @@ def migrate_database():
         cursor.execute("CREATE INDEX idx_value_date ON transactions(value_date)")
         cursor.execute("CREATE INDEX idx_phone_number ON transactions(phone_number)")
         cursor.execute("CREATE INDEX idx_statement_id ON transactions(statement_id)")
-        # Uniqueness constraint to prevent duplicate transactions for the same statement
         cursor.execute(
             """
-            CREATE UNIQUE INDEX uq_transactions_statement_txn
-            ON transactions(statement_id, transaction_details, value_date, credit, debit)
+            CREATE UNIQUE INDEX uq_transactions_transaction_url
+            ON transactions (transaction_url)
+            WHERE transaction_url IS NOT NULL
             """
         )
         print("✓ Indexes created")
@@ -77,6 +78,7 @@ def migrate_database():
         print("  ✓ debit (FLOAT) - Money Out")
         print("  ✓ balance (FLOAT)")
         print("  ✓ phone_number (VARCHAR)")
+        print("  ✓ transaction_url (VARCHAR, partial unique when set)")
         
         return True
         

@@ -11,6 +11,7 @@ A web application for uploading PDF bank statements, extracting transaction data
 ✅ **Responsive UI** - Modern Vue 3 interface with real-time filtering  
 ✅ **Transaction Statistics** - Summary stats and analytics  
 ✅ **Google Sign-In** - Firebase Authentication; API routes verify ID tokens with Firebase Admin  
+✅ **Duplicate handling** - Each transaction is keyed by a stable id derived from statement text (`transaction_url`: third whitespace-separated token in transaction details). Re-uploads skip rows already in the database; PostgreSQL enforces at most one row per non-null id. A maintenance script can backfill ids and remove historical duplicates.
 
 ## Tech Stack
 
@@ -43,8 +44,9 @@ transaction_history/
 │   ├── routes/                # API endpoints
 │   │   ├── upload.py          # POST /api/upload endpoint
 │   │   └── transactions.py    # GET /api/transactions, filtering, stats
+│   ├── scripts/               # DB maintenance (e.g. transaction_url backfill / dedupe)
 │   └── utils/                 # Utility functions
-│       ├── pdf_parser.py      # PDF extraction with phone regex
+│       ├── pdf_parser.py      # PDF extraction with phone regex and transaction_url token
 │       ├── validators.py      # File & PDF validators
 │       └── firebase_auth.py   # Firebase Admin token verification
 │
@@ -157,7 +159,7 @@ transaction_history/
 ## API Endpoints
 
 ### Upload
-- `POST /api/upload` - Upload and process PDF statement
+- `POST /api/upload` - Upload and process PDF statement (response includes `skipped_existing_url` and `skipped_no_url` when rows are skipped for deduplication)
 
 ### Transactions
 - `GET /api/transactions` - Get all transactions with optional filters
@@ -172,6 +174,13 @@ transaction_history/
 
 ### Statistics
 - `GET /api/transactions/stats/summary` - Get summary statistics
+
+## Deduplication and `transaction_url`
+
+- **Identity**: The third whitespace-separated token from the transaction-details text (e.g. MPS-style lines: `MPS 254791859862 UCBAV90KI3 …` → `UCBAV90KI3`) is stored as `transaction_url` and treated as the canonical id when present.
+- **On upload**: Rows without a third token are skipped; if `transaction_url` already exists in the database, the row is skipped and tallies are returned in the upload response (`skipped_existing_url`, `skipped_no_url`).
+- **Database**: A partial unique index on `transaction_url` (where not null) prevents duplicate ids at insert time once the schema is applied.
+- **Existing data**: From `backend/`, run `python scripts/dedupe_transaction_url.py --help`. Typical one-time upgrade: `python scripts/dedupe_transaction_url.py --all` (adds column if needed, drops legacy composite uniqueness, backfills tokens, removes duplicate rows while printing per-key tallies, creates the unique index). Run against your Neon `DATABASE_URL` with the same `.env` as the app.
 
 ## Phone Number Extraction
 
@@ -189,33 +198,24 @@ The extractor works best with:
 
 ## Database Schema
 
-### Transactions Table
-```sql
-CREATE TABLE transactions (
-  id VARCHAR(36) PRIMARY KEY,
-  date DATE NOT NULL,
-  description VARCHAR(500) NOT NULL,
-  amount FLOAT NOT NULL,
-  type VARCHAR(10),  -- 'debit' or 'credit'
-  balance FLOAT,
-  reference VARCHAR(100),
-  phone_number VARCHAR(20) INDEXED,  -- Extracted 10-digit number
-  transactional_details TEXT,         -- Full row from PDF
-  raw_data JSON,                      -- Original PDF row
-  statement_id VARCHAR(100) INDEXED,  -- Source statement reference
-  category VARCHAR(50),
-  tags JSON,
-  confidence FLOAT,
-  manual_review BOOLEAN,
-  extracted_at TIMESTAMP,
-  created_at TIMESTAMP,
-  updated_at TIMESTAMP
-);
-```
+See [`backend/models/transaction.py`](backend/models/transaction.py) for the authoritative model. Notable columns:
+
+| Column | Role |
+|--------|------|
+| `transaction_details` | Description / details text from the statement |
+| `value_date` | Transaction date |
+| `credit` / `debit` | Money in / out |
+| `balance` | Running balance when present |
+| `phone_number` | Extracted `0\d{9}` for filtering |
+| `transaction_url` | Third token from details; **unique** (when not null) for deduplication |
+| `statement_id` | Hash-derived id for the source PDF |
+| `raw_data` | JSON from extraction |
+
+Fresh installs using [`backend/migrate_direct.py`](backend/migrate_direct.py) get a matching PostgreSQL definition including the partial unique index on `transaction_url`.
 
 ## Performance Notes
 
-- Indexes on `phone_number`, `date`, `statement_id` for fast filtering
+- Indexes on `phone_number`, `value_date`, `statement_id`, and partial unique index on `transaction_url` (non-null) for filtering and deduplication
 - Pagination (max 500 per page) to handle large datasets
 - XHR upload with progress tracking
 - Client-side sorting and filtering for responsive UX
@@ -243,7 +243,7 @@ CREATE TABLE transactions (
 - [x] User authentication (Firebase Google Sign-In + Admin token verification on API)
 - [ ] Transaction categorization (auto-categorize by merchant)
 - [ ] CSV/Excel export
-- [ ] Duplicate detection across statements
+- [x] Duplicate detection across statements (`transaction_url` + upload skip + optional `scripts/dedupe_transaction_url.py`)
 - [ ] Balance reconciliation
 - [ ] Mobile app
 - [ ] Advanced analytics and charting

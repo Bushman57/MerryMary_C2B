@@ -35,6 +35,7 @@ def migrate():
             print("  - debit")
             print("  - balance")
             print("  - phone_number")
+            print("  - transaction_url (partial unique when set)")
             return True
         except Exception as e:
             print(f"✗ Error creating table: {e}")

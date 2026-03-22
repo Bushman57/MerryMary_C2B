@@ -4,7 +4,6 @@ from pathlib import Path
 from datetime import datetime
 import hashlib
 import logging
-from uuid import uuid4
 
 from database import db
 from models.transaction import Transaction
@@ -61,33 +60,6 @@ def upload_file():
         # Use a shorter prefix for readability while remaining very unlikely to collide
         statement_id = file_hash[:32]
 
-        # If this statement was already processed before, short-circuit and
-        # return existing transactions instead of inserting duplicates.
-        existing_q = db.session.query(Transaction).filter_by(statement_id=statement_id)
-        existing_count = existing_q.count()
-        if existing_count > 0:
-            logger.info(
-                f"Statement {statement_id} already processed, returning existing "
-                f"{existing_count} transactions"
-            )
-            filepath.unlink(missing_ok=True)
-            existing_sample = existing_q.limit(10).all()
-            return jsonify(
-                {
-                    "success": True,
-                    "statement_id": statement_id,
-                    "filename": filename,
-                    "rows_updated": 0,
-                    "transaction_count": existing_count,
-                    "duplicates_skipped": existing_count,
-                    "sample_transactions": [t.to_dict() for t in existing_sample],
-                    "message": (
-                        f"Statement already processed. Reused {existing_count} "
-                        "existing transactions."
-                    ),
-                }
-            ), 200
-
         # Validate PDF file
         is_valid, message = validate_pdf_file(str(filepath))
         if not is_valid:
@@ -114,9 +86,11 @@ def upload_file():
         
         logger.info(f"Extracted {len(transactions)} transactions from PDF")
         
-        # Store ALL extracted transactions in database in batches to avoid connection timeouts
+        # Store extracted transactions; skip rows without transaction_url or URL already in DB
         stored_count = 0
-        duplicate_count = 0
+        skipped_existing_url = 0
+        skipped_no_url = 0
+        pending_urls = set()
         batch_size = 10  # Insert in smaller batches
         try:
             for i in range(0, len(transactions), batch_size):
@@ -126,25 +100,34 @@ def upload_file():
                 
                 for idx, txn_data in enumerate(batch):
                     try:
-                        # Skip transaction if it already exists for this statement
-                        existing = Transaction.query.filter_by(
-                            statement_id=statement_id,
-                            transaction_details=txn_data['description'],
-                            value_date=txn_data['date'],
-                            credit=txn_data.get('amount') if txn_data.get('type') == 'credit' else None,
-                            debit=txn_data.get('amount') if txn_data.get('type') != 'credit' else None,
-                        ).first()
-
-                        if existing:
-                            duplicate_count += 1
+                        txn_url = txn_data.get('transaction_url')
+                        if not txn_url:
+                            skipped_no_url += 1
                             logger.debug(
-                                f"  ⏭️  Row {i + idx}: Skipped duplicate "
-                                f"{txn_data['date']} | {txn_data.get('amount')}"
+                                f"  ⏭️  Row {i + idx}: Skipped (no transaction_url token)"
+                            )
+                            continue
+
+                        if txn_url in pending_urls:
+                            skipped_existing_url += 1
+                            logger.debug(
+                                f"  ⏭️  Row {i + idx}: Skipped duplicate URL in file "
+                                f"{txn_url}"
+                            )
+                            continue
+
+                        existing = Transaction.query.filter_by(
+                            transaction_url=txn_url
+                        ).first()
+                        if existing:
+                            skipped_existing_url += 1
+                            logger.debug(
+                                f"  ⏭️  Row {i + idx}: Skipped existing transaction_url "
+                                f"{txn_url}"
                             )
                             continue
 
                         # Map extracted data to database column names
-                        # Determine if amount is credit or debit based on transaction type
                         credit_amount = None
                         debit_amount = None
                         if txn_data.get('type') == 'credit':
@@ -153,26 +136,27 @@ def upload_file():
                             debit_amount = txn_data.get('amount')
                         
                         transaction = Transaction(
-                            transaction_details=txn_data['description'],  # From Transaction Details column
-                            payment_reference=txn_data.get('reference'),  # From Payment Reference column
-                            value_date=txn_data['date'],  # From Value Date column
-                            credit=credit_amount,  # Credit (Money In)
-                            debit=debit_amount,  # Debit (Money Out)
+                            transaction_details=txn_data['description'],
+                            payment_reference=txn_data.get('reference'),
+                            value_date=txn_data['date'],
+                            credit=credit_amount,
+                            debit=debit_amount,
                             balance=txn_data.get('balance'),
-                            phone_number=txn_data.get('phone_number'),  # Extracted for filtering
+                            phone_number=txn_data.get('phone_number'),
+                            transaction_url=txn_url,
                             raw_data=txn_data.get('raw_data'),
                             statement_id=statement_id,
                             confidence=txn_data.get('confidence', 0.8),
                             manual_review=False
                         )
                         db.session.add(transaction)
+                        pending_urls.add(txn_url)
                         stored_count += 1
                         logger.debug(f"  ✓ Row {i + idx}: Added {txn_data['date']} | {txn_data['amount']}")
                     except Exception as row_error:
                         logger.error(f"  ✗ Row {i + idx}: Error - {str(row_error)}")
                         raise
                 
-                # Commit each batch to avoid connection timeouts
                 try:
                     db.session.commit()
                     logger.info(f"✓ Committed batch: {min(i + batch_size, len(transactions))}/{len(transactions)} transactions")
@@ -181,7 +165,7 @@ def upload_file():
                     logger.error(f"✗ BATCH COMMIT FAILED at row {i}: {str(commit_error)}")
                     raise
             
-            logger.info(f"✓ Successfully stored {stored_count} transactions in Neon database")
+            logger.info(f"✓ Stored {stored_count} transactions (skipped_no_url={skipped_no_url}, skipped_existing_url={skipped_existing_url})")
         
         except Exception as e:
             db.session.rollback()
@@ -189,28 +173,28 @@ def upload_file():
             logger.error(f"Database error: {str(e)}")
             return jsonify({'error': f'Database error: {str(e)}'}), 500
         
-        # Clean up uploaded file
         filepath.unlink()
         
-        # Get stored transactions for display
         stored_transactions = db.session.query(Transaction).filter_by(
             statement_id=statement_id
         ).limit(10).all()
 
-        # Return success response with row count
+        total_in_file = len(transactions)
         return jsonify({
             'success': True,
             'statement_id': statement_id,
             'filename': filename,
             'rows_updated': stored_count,
             'transaction_count': stored_count,
-            'duplicates_skipped': duplicate_count,
+            'skipped_existing_url': skipped_existing_url,
+            'skipped_no_url': skipped_no_url,
+            'parsed_count': total_in_file,
             'sample_transactions': [t.to_dict() for t in stored_transactions],
             'message': (
                 f'✓ Stored {stored_count} new transactions'
-                + (f', skipped {duplicate_count} duplicates' if duplicate_count else '')
-                + ' in Neon database'
-            )
+                f' (parsed {total_in_file}; skipped {skipped_existing_url} existing URL(s), '
+                f'{skipped_no_url} without URL token)'
+            ),
         }), 200
     
     except RequestEntityTooLarge:
