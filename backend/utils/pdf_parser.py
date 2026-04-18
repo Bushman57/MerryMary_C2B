@@ -16,8 +16,12 @@ class PDFParseError(Exception):
 class TransactionExtractor:
     """Extract transactions from PDF bank statements"""
     
-    # Regex pattern for phone numbers: 10 digits starting with 0
+    # Regex pattern for phone numbers: 10 digits starting with 0 (local Kenya)
     PHONE_REGEX = re.compile(r'\b0\d{9}\b')
+    # International Kenya MSISDN without +: 254 + 9 national digits
+    PHONE_REGEX_INTL = re.compile(r'\b254(\d{9})\b')
+    # Line begins with international-format MSISDN (Kenya)
+    TRANSACTION_LINE_START_254 = re.compile(r'^254\d{9}\b')
     
     # Common date formats in bank statements
     DATE_FORMATS = [
@@ -32,21 +36,34 @@ class TransactionExtractor:
         self.transactions = []
     
     @staticmethod
+    def _line_starts_transaction_block(line: str) -> bool:
+        """True if this line begins a text block (MPS or 254-prefixed MSISDN)."""
+        return line.startswith("MPS ") or bool(
+            TransactionExtractor.TRANSACTION_LINE_START_254.match(line)
+        )
+    
+    @staticmethod
     def extract_phone_from_text(text: str) -> Optional[str]:
         r"""
-        Extract phone number from text using regex pattern 0\d{9}
-        
+        Extract phone number from text: local ``0\d{9}``, or ``254\d{9}``
+        normalized to local form (``0`` + 9 national digits).
+
         Args:
             text: Text to search for phone number
-            
+
         Returns:
-            Phone number string or None if not found
+            Local-format phone string or None if not found
         """
         if not text:
             return None
-        
-        match = TransactionExtractor.PHONE_REGEX.search(str(text))
-        return match.group(0) if match else None
+        s = str(text)
+        match = TransactionExtractor.PHONE_REGEX.search(s)
+        if match:
+            return match.group(0)
+        intl = TransactionExtractor.PHONE_REGEX_INTL.search(s)
+        if intl:
+            return "0" + intl.group(1)
+        return None
 
     @staticmethod
     def extract_third_token_from_details(text: Optional[str]) -> Optional[str]:
@@ -163,7 +180,7 @@ class TransactionExtractor:
                 if len(pdf.pages) == 0:
                     raise PDFParseError("PDF has no pages")
                 
-                # Text-based, MPS-only extraction from all pages
+                # Text-based extraction (MPS and 254-prefixed blocks) from all pages
                 for page_num, page in enumerate(pdf.pages, 1):
                     try:
                         text = page.extract_text() or ""
@@ -187,7 +204,7 @@ class TransactionExtractor:
             logger.error(f"Error extracting PDF: {str(e)}")
             raise PDFParseError(f"Failed to extract PDF: {str(e)}")
         
-        logger.info(f"✓ Extracted {len(self.transactions)} MPS transactions from {pdf_path}")
+        logger.info(f"✓ Extracted {len(self.transactions)} transactions from {pdf_path}")
         return self.transactions
 
     def _extract_transactions_from_lines(
@@ -197,11 +214,12 @@ class TransactionExtractor:
         statement_id: Optional[str] = None,
     ) -> List[Dict]:
         """
-        Text-based, MPS-only extraction from a list of lines on a page.
+        Text-based extraction from a list of lines on a page.
 
-        A transaction is defined as a block of lines starting with "MPS ".
-        All following lines until the next "MPS " (or end of page) belong
-        to the same transaction.
+        A transaction is a block of lines whose first line starts with "MPS "
+        or with a Kenya international-format MSISDN (``254`` + 9 digits).
+        Following lines until the next such anchor (or end of page) belong to
+        the same transaction.
         """
         transactions: List[Dict] = []
 
@@ -209,7 +227,7 @@ class TransactionExtractor:
         current_tokens: List[str] = []
 
         def finalize_current() -> None:
-            """Finalize current MPS block into a transaction, if possible."""
+            """Finalize current transaction block into a record, if possible."""
             if not current_details:
                 return
 
@@ -237,7 +255,7 @@ class TransactionExtractor:
             if not date_iso:
                 # Without a valid date we consider this block not a valid transaction
                 logger.debug(
-                    f"Skipping MPS block on page {page_num} due to missing parsable date: {full_details[:80]}..."
+                    f"Skipping transaction block on page {page_num} due to missing parsable date: {full_details[:80]}..."
                 )
                 return
 
@@ -263,7 +281,7 @@ class TransactionExtractor:
 
             if amount_value is None:
                 logger.debug(
-                    f"Skipping MPS block on page {page_num} due to missing parsable amount: {full_details[:80]}..."
+                    f"Skipping transaction block on page {page_num} due to missing parsable amount: {full_details[:80]}..."
                 )
                 return
 
@@ -294,7 +312,7 @@ class TransactionExtractor:
             }
 
             logger.info(
-                f"✓ Parsed MPS tx on page {page_num}: {date_iso} | {amount_value} | {phone_number}"
+                f"✓ Parsed tx on page {page_num}: {date_iso} | {amount_value} | {phone_number}"
             )
             transactions.append(transaction)
 
@@ -302,8 +320,8 @@ class TransactionExtractor:
             if not line:
                 continue
 
-            # Start of new MPS transaction block
-            if line.startswith("MPS "):
+            # Start of new transaction block (MPS or 254… MSISDN)
+            if TransactionExtractor._line_starts_transaction_block(line):
                 # Finalize previous block (if any)
                 finalize_current()
 
@@ -311,11 +329,11 @@ class TransactionExtractor:
                 current_tokens = line.split()
                 continue
 
-            # Ignore lines outside of an MPS block
+            # Ignore lines outside of a transaction block
             if not current_details:
                 continue
 
-            # Continuation of current MPS block
+            # Continuation of current transaction block
             current_details.append(line)
             current_tokens.extend(line.split())
 
@@ -323,7 +341,7 @@ class TransactionExtractor:
         finalize_current()
 
         logger.info(
-            f"Page {page_num}: Extracted {len(transactions)} MPS transactions from text lines"
+            f"Page {page_num}: Extracted {len(transactions)} transactions from text lines"
         )
         return transactions
     
@@ -374,11 +392,11 @@ class TransactionExtractor:
     
     def _merge_multi_line_rows(self, table: List[List[str]]) -> List[List[str]]:
         """
-        Merge multi-line transaction details using "MPS " as transaction start marker
-        
-        Each transaction starts with "MPS " in the transaction details column.
-        All subsequent rows until the next "MPS " are continuation lines that 
-        belong to that transaction.
+        Merge multi-line transaction details using known transaction start markers.
+
+        Each transaction starts with "MPS ", "EAZZY-MMONEY", "SMS CHARGE", or a
+        line beginning with Kenya ``254`` + 9-digit MSISDN in the details column.
+        Subsequent rows until the next such marker are continuation lines.
         
         Args:
             table: Raw extracted table rows
@@ -429,7 +447,9 @@ class TransactionExtractor:
                 if TransactionExtractor.parse_amount(row_clean[4]) is not None:
                     has_amount = True
 
-            starts_with_marker = any(details.startswith(m) for m in start_markers)
+            starts_with_marker = any(details.startswith(m) for m in start_markers) or bool(
+                TransactionExtractor.TRANSACTION_LINE_START_254.match(details)
+            )
             looks_like_transaction_start = has_date and has_amount
 
             if starts_with_marker:
