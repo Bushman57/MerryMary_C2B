@@ -16,12 +16,12 @@ class PDFParseError(Exception):
 class TransactionExtractor:
     """Extract transactions from PDF bank statements"""
     
-    # Regex pattern for phone numbers: 10 digits starting with 0 (local Kenya)
+    # Kenyan mobile local (10 digits starting with 0)
     PHONE_REGEX = re.compile(r'\b0\d{9}\b')
-    # International Kenya MSISDN without +: 254 + 9 national digits
-    PHONE_REGEX_INTL = re.compile(r'\b254(\d{9})\b')
-    # Line begins with international-format MSISDN (Kenya)
-    TRANSACTION_LINE_START_254 = re.compile(r'^254\d{9}\b')
+    # Same MSISDN in international form without +
+    PHONE_REGEX_INTL = re.compile(r'\b254\d{9}\b')
+    # Equity-style payment ref in details, e.g. UDGNW142K7, UDH3116RGT (UD + 8 alnum)
+    DETAIL_UD_CODE = re.compile(r'\bUD[A-Z0-9]{8}\b')
     
     # Common date formats in bank statements
     DATE_FORMATS = [
@@ -36,45 +36,56 @@ class TransactionExtractor:
         self.transactions = []
     
     @staticmethod
-    def _line_starts_transaction_block(line: str) -> bool:
-        """True if this line begins a text block (MPS or 254-prefixed MSISDN)."""
-        return line.startswith("MPS ") or bool(
-            TransactionExtractor.TRANSACTION_LINE_START_254.match(line)
-        )
-    
-    @staticmethod
     def extract_phone_from_text(text: str) -> Optional[str]:
-        r"""
-        Extract phone number from text: local ``0\d{9}``, or ``254\d{9}``
-        normalized to local form (``0`` + 9 national digits).
+        """
+        Extract Kenyan mobile in local form (0 + 9 digits).
 
-        Args:
-            text: Text to search for phone number
-
-        Returns:
-            Local-format phone string or None if not found
+        Prefers a local match (0XXXXXXXXX). Otherwise matches 254XXXXXXXXX
+        and normalizes to local for consistent storage and API lookup.
         """
         if not text:
             return None
         s = str(text)
-        match = TransactionExtractor.PHONE_REGEX.search(s)
-        if match:
-            return match.group(0)
+        local = TransactionExtractor.PHONE_REGEX.search(s)
+        if local:
+            return local.group(0)
         intl = TransactionExtractor.PHONE_REGEX_INTL.search(s)
         if intl:
-            return "0" + intl.group(1)
+            digits = intl.group(0)
+            return "0" + digits[3:]
         return None
 
     @staticmethod
+    def _line_starts_transaction_block(line: str) -> bool:
+        """True if this line opens a new transaction details block."""
+        if line.startswith("MPS "):
+            return True
+        if not TransactionExtractor.DETAIL_UD_CODE.search(line):
+            return False
+        return bool(
+            TransactionExtractor.PHONE_REGEX.search(line)
+            or TransactionExtractor.PHONE_REGEX_INTL.search(line)
+        )
+
+    @staticmethod
     def extract_third_token_from_details(text: Optional[str]) -> Optional[str]:
-        """Third whitespace-separated token from transaction details (canonical id)."""
+        """
+        Canonical transaction id token from the first line of transaction details.
+
+        MPS-style lines put the id in the third token (e.g. ``MPS 254… UCBAV90KI3``).
+        Equity-style lines without MPS put the UD code in the second token
+        (e.g. ``254… UDH3116RGT 0766…``).
+        """
         if text is None:
             return None
         s = str(text).strip()
         if not s:
             return None
-        parts = s.split()
-        return parts[2] if len(parts) >= 3 else None
+        first_line = s.split("\n", 1)[0].strip()
+        parts = first_line.split()
+        if first_line.startswith("MPS "):
+            return parts[2] if len(parts) >= 3 else None
+        return parts[1] if len(parts) >= 2 else None
     
     @staticmethod
     def parse_date(date_str: str) -> Optional[str]:
@@ -180,7 +191,7 @@ class TransactionExtractor:
                 if len(pdf.pages) == 0:
                     raise PDFParseError("PDF has no pages")
                 
-                # Text-based extraction (MPS and 254-prefixed blocks) from all pages
+                # Text-based extraction from all pages
                 for page_num, page in enumerate(pdf.pages, 1):
                     try:
                         text = page.extract_text() or ""
@@ -216,10 +227,10 @@ class TransactionExtractor:
         """
         Text-based extraction from a list of lines on a page.
 
-        A transaction is a block of lines whose first line starts with "MPS "
-        or with a Kenya international-format MSISDN (``254`` + 9 digits).
-        Following lines until the next such anchor (or end of page) belong to
-        the same transaction.
+        A new transaction block starts when a line begins with "MPS ", or when
+        it looks like a full Equity-style detail line: a UD payment code
+        (UD + 8 alphanumeric) together with a Kenyan mobile in local or 254 form.
+        Continuation lines are everything until the next block opener.
         """
         transactions: List[Dict] = []
 
@@ -227,7 +238,7 @@ class TransactionExtractor:
         current_tokens: List[str] = []
 
         def finalize_current() -> None:
-            """Finalize current transaction block into a record, if possible."""
+            """Finalize current detail block into a transaction, if possible."""
             if not current_details:
                 return
 
@@ -320,7 +331,7 @@ class TransactionExtractor:
             if not line:
                 continue
 
-            # Start of new transaction block (MPS or 254… MSISDN)
+            # Start of new transaction details block
             if TransactionExtractor._line_starts_transaction_block(line):
                 # Finalize previous block (if any)
                 finalize_current()
@@ -392,11 +403,11 @@ class TransactionExtractor:
     
     def _merge_multi_line_rows(self, table: List[List[str]]) -> List[List[str]]:
         """
-        Merge multi-line transaction details using known transaction start markers.
+        Merge multi-line transaction details using known block-start markers.
 
-        Each transaction starts with "MPS ", "EAZZY-MMONEY", "SMS CHARGE", or a
-        line beginning with Kenya ``254`` + 9-digit MSISDN in the details column.
-        Subsequent rows until the next such marker are continuation lines.
+        A new transaction starts when details begin with a known prefix (e.g. MPS),
+        or match Equity-style detail lines (UD code + Kenyan phone). Following
+        rows until the next such line are continuation lines.
         
         Args:
             table: Raw extracted table rows
@@ -447,9 +458,16 @@ class TransactionExtractor:
                 if TransactionExtractor.parse_amount(row_clean[4]) is not None:
                     has_amount = True
 
-            starts_with_marker = any(details.startswith(m) for m in start_markers) or bool(
-                TransactionExtractor.TRANSACTION_LINE_START_254.match(details)
+            looks_like_equity_detail = bool(
+                TransactionExtractor.DETAIL_UD_CODE.search(details)
+                and (
+                    TransactionExtractor.PHONE_REGEX.search(details)
+                    or TransactionExtractor.PHONE_REGEX_INTL.search(details)
+                )
             )
+            starts_with_marker = any(
+                details.startswith(m) for m in start_markers
+            ) or looks_like_equity_detail
             looks_like_transaction_start = has_date and has_amount
 
             if starts_with_marker:

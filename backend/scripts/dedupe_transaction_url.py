@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 """
-Backfill transaction_url (third whitespace token), tally duplicates, remove extras.
+Backfill transaction_url (MPS: third token / non-MPS: second token on first line),
+tally duplicates, remove extras.
 
 Keeps the row with the earliest created_at (then smallest id) per transaction_url.
 
@@ -48,7 +49,7 @@ def run_schema() -> None:
 
 
 def run_backfill(batch_size: int = 500) -> int:
-    """Set transaction_url where NULL using third token of transaction_details."""
+    """Set transaction_url where NULL using extract_third_token_from_details rules."""
     updated = 0
     last_id = ""
     while True:

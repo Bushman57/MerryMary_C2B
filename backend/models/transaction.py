@@ -31,7 +31,7 @@ class Transaction(db.Model):
     # Extracted phone number from transaction details
     phone_number = db.Column(db.String(20), index=True)
 
-    # Third token from transaction details; global unique identity when set
+    # Canonical id from transaction details (MPS: 3rd token / else 2nd on first line)
     transaction_url = db.Column(db.String(255), nullable=True)
     
     # Raw data from PDF extraction
