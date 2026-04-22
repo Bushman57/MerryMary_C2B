@@ -124,6 +124,7 @@ def verify_bearer_token() -> Optional[Tuple[Any, int]]:
             "email": "dev@local",
             "email_verified": True,
         }
+        request.is_super_admin = True
         return None
 
     import firebase_admin
@@ -169,7 +170,11 @@ def verify_bearer_token() -> Optional[Tuple[Any, int]]:
         if email not in allowed_emails:
             return jsonify({"error": "Forbidden", "detail": "Email not allowed"}), 403
 
+    uid = decoded.get("uid") or ""
+    super_admin_uids = current_app.config.get("SUPER_ADMIN_UIDS") or []
+
     request.firebase_user = decoded
+    request.is_super_admin = uid in super_admin_uids
     return None
 
 

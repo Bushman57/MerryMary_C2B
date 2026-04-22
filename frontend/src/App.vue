@@ -27,7 +27,7 @@
     <main v-else-if="!authStore.isSignedIn" class="auth-gate">
       <div class="auth-card">
         <h2>Sign in</h2>
-        <p class="auth-sub">Login to access uploads and analytics.</p>
+        <p class="auth-sub">Login  to access uploads and analytics.</p>
         <p v-if="authStore.authError" class="auth-err">{{ authStore.authError }}</p>
         <button
           type="button"

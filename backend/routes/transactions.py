@@ -1,6 +1,6 @@
 from flask import Blueprint, request, jsonify
 from sqlalchemy import func
-from datetime import datetime
+from datetime import datetime, timedelta
 import logging
 
 from database import db
@@ -8,6 +8,49 @@ from models.transaction import Transaction
 
 logger = logging.getLogger(__name__)
 transactions_bp = Blueprint('transactions', __name__)
+
+
+def _is_super_admin() -> bool:
+    return bool(getattr(request, 'is_super_admin', False))
+
+
+def _restricted_date_window():
+    """
+    For non-super-admins, enforce a 7-day window ending at latest value_date in DB.
+    Returns (window_start, window_end). If there is no data, both are None.
+    """
+    if _is_super_admin():
+        return None, None
+
+    max_date = db.session.query(func.max(Transaction.value_date)).scalar()
+    if not max_date:
+        return None, None
+    return max_date - timedelta(days=6), max_date
+
+
+def _apply_access_window(query):
+    """Apply date restriction for non-super-admin users and return (query, access_meta)."""
+    window_start, window_end = _restricted_date_window()
+    if window_start and window_end:
+        query = query.filter(
+            Transaction.value_date >= window_start,
+            Transaction.value_date <= window_end
+        )
+        access = {
+            'access_scope': 'restricted_last_7_days',
+            'effective_start_date': window_start.isoformat(),
+            'effective_end_date': window_end.isoformat(),
+        }
+        return query, access
+
+    if _is_super_admin():
+        return query, {'access_scope': 'full'}
+
+    return query, {
+        'access_scope': 'restricted_last_7_days',
+        'effective_start_date': None,
+        'effective_end_date': None,
+    }
 
 
 @transactions_bp.route('/transactions', methods=['GET'])
@@ -53,17 +96,19 @@ def get_transactions():
         if statement_id:
             query = query.filter_by(statement_id=statement_id)
 
-        # Apply optional date range filters
+        # Apply optional date range filters (only for super admins; non-admins are forced to access window)
         # Expect dates as ISO strings (YYYY-MM-DD), matching stored value_date
         try:
-            if start_date_str:
+            if start_date_str and _is_super_admin():
                 start_date = datetime.strptime(start_date_str, "%Y-%m-%d").date()
                 query = query.filter(Transaction.value_date >= start_date)
-            if end_date_str:
+            if end_date_str and _is_super_admin():
                 end_date = datetime.strptime(end_date_str, "%Y-%m-%d").date()
                 query = query.filter(Transaction.value_date <= end_date)
         except ValueError:
             return jsonify({'error': 'Invalid start_date or end_date format. Use YYYY-MM-DD.'}), 400
+
+        query, access = _apply_access_window(query)
         
         # Apply sorting
         if sort_by in ['value_date', 'credit', 'debit', 'balance']:
@@ -97,7 +142,8 @@ def get_transactions():
                 'end_date': end_date_str,
                 'sort_by': sort_by,
                 'sort_order': sort_order
-            }
+            },
+            'access': access
         }), 200
     
     except Exception as e:
@@ -114,14 +160,17 @@ def get_transaction(transaction_id):
         JSON with transaction details or 404 if not found
     """
     try:
-        transaction = Transaction.query.get(transaction_id)
+        query = Transaction.query.filter_by(id=transaction_id)
+        query, access = _apply_access_window(query)
+        transaction = query.first()
         
         if not transaction:
             return jsonify({'error': 'Transaction not found'}), 404
         
         return jsonify({
             'success': True,
-            'transaction': transaction.to_dict()
+            'transaction': transaction.to_dict(),
+            'access': access
         }), 200
     
     except Exception as e:
@@ -138,12 +187,34 @@ def get_statements():
         JSON with list of statements
     """
     try:
-        statements = Transaction.get_statements()
+        query = db.session.query(
+            Transaction.statement_id,
+            func.count(Transaction.id).label('count'),
+            func.min(Transaction.extracted_at).label('extracted_at')
+        ).filter(
+            Transaction.statement_id.isnot(None)
+        )
+        query, access = _apply_access_window(query)
+        results = query.group_by(
+            Transaction.statement_id
+        ).order_by(
+            Transaction.extracted_at.desc()
+        ).all()
+
+        statements = [
+            {
+                'statement_id': r[0],
+                'transaction_count': r[1],
+                'extracted_at': r[2].isoformat() if r[2] else None
+            }
+            for r in results
+        ]
         
         return jsonify({
             'success': True,
             'statements': statements,
-            'total': len(statements)
+            'total': len(statements),
+            'access': access
         }), 200
     
     except Exception as e:
@@ -172,7 +243,9 @@ def get_statement_transactions(statement_id):
         limit = min(500, max(1, limit))
         
         # Get transactions for statement
-        paginated = Transaction.get_by_statement(statement_id, page=page, limit=limit)
+        query = Transaction.query.filter_by(statement_id=statement_id)
+        query, access = _apply_access_window(query)
+        paginated = query.paginate(page=page, per_page=limit)
         
         return jsonify({
             'success': True,
@@ -185,7 +258,8 @@ def get_statement_transactions(statement_id):
                 'pages': paginated.pages,
                 'has_next': paginated.has_next,
                 'has_prev': paginated.has_prev
-            }
+            },
+            'access': access
         }), 200
     
     except Exception as e:
@@ -214,7 +288,9 @@ def get_transactions_by_phone(phone_number):
         limit = min(500, max(1, limit))
         
         # Get transactions for phone
-        paginated = Transaction.get_by_phone(phone_number, page=page, limit=limit)
+        query = Transaction.query.filter_by(phone_number=phone_number)
+        query, access = _apply_access_window(query)
+        paginated = query.paginate(page=page, per_page=limit)
         
         return jsonify({
             'success': True,
@@ -227,7 +303,8 @@ def get_transactions_by_phone(phone_number):
                 'pages': paginated.pages,
                 'has_next': paginated.has_next,
                 'has_prev': paginated.has_prev
-            }
+            },
+            'access': access
         }), 200
     
     except Exception as e:
@@ -267,11 +344,15 @@ def get_transaction_stats():
         JSON with transaction statistics
     """
     try:
-        total = Transaction.query.count()
+        base_query = Transaction.query
+        base_query, access = _apply_access_window(base_query)
+        total = base_query.count()
         by_type = db.session.query(
             Transaction.type,
             func.count(Transaction.id).label('count'),
             func.sum(Transaction.amount).label('total_amount')
+        ).filter(
+            Transaction.id.in_(base_query.with_entities(Transaction.id))
         ).group_by(Transaction.type).all()
         
         by_phone = db.session.query(
@@ -279,7 +360,8 @@ def get_transaction_stats():
             func.count(Transaction.id).label('count'),
             func.sum(Transaction.amount).label('total_amount')
         ).filter(
-            Transaction.phone_number.isnot(None)
+            Transaction.phone_number.isnot(None),
+            Transaction.id.in_(base_query.with_entities(Transaction.id))
         ).group_by(
             Transaction.phone_number
         ).order_by(
@@ -310,7 +392,8 @@ def get_transaction_stats():
                 'total_transactions': total,
                 'by_type': stats_by_type,
                 'top_phone_numbers': stats_by_phone
-            }
+            },
+            'access': access
         }), 200
     
     except Exception as e:

@@ -61,6 +61,7 @@
         </button>
         <span v-if="errorMessage" class="error-text">{{ errorMessage }}</span>
       </div>
+      <div v-if="accessNotice" class="access-notice">{{ accessNotice }}</div>
     </section>
 
     <!-- Summary -->
@@ -121,6 +122,7 @@ const sortOrder = ref('desc')
 const isLoading = ref(false)
 const errorMessage = ref('')
 const rows = ref([])
+const accessNotice = ref('')
 
 const canApply = computed(() => {
   return !!startDate.value && !!endDate.value && !!phone.value
@@ -138,6 +140,7 @@ async function applyFilters() {
   if (!canApply.value) return
   isLoading.value = true
   errorMessage.value = ''
+  accessNotice.value = ''
   rows.value = []
 
   try {
@@ -153,6 +156,9 @@ async function applyFilters() {
 
     if (data && data.success && Array.isArray(data.transactions)) {
       rows.value = data.transactions
+      if (data.access?.access_scope === 'restricted_last_7_days') {
+        accessNotice.value = `Access is limited to data between ${formatDate(data.access.effective_start_date)} and ${formatDate(data.access.effective_end_date)}.`
+      }
     } else {
       errorMessage.value = data.error || 'Failed to load analytics data'
     }
@@ -281,6 +287,15 @@ function formatAmount(amount) {
 .error-text {
   font-size: 13px;
   color: #d32f2f;
+}
+
+.access-notice {
+  font-size: 13px;
+  color: #5c4b00;
+  background: #fff7db;
+  border: 1px solid #f0df9a;
+  border-radius: 8px;
+  padding: 8px 10px;
 }
 
 .summary {

@@ -6,7 +6,7 @@ A web application for uploading PDF bank statements, extracting transaction data
 
 ✅ **PDF Upload** - Drag-and-drop PDF file upload with progress tracking  
 ✅ **Transaction Extraction** - Automatic table extraction using pdfplumber  
-✅ **Phone Number Filtering** - Extract and filter by local `0\d{9}`; international `254\d{9}` in PDF text is normalized to the same local form  
+✅ **Phone Number Filtering** - Extract and filter transactions by phone number (10 digits starting with 0)  
 ✅ **Data Persistence** - Store transactions in Neon PostgreSQL  
 ✅ **Responsive UI** - Modern Vue 3 interface with real-time filtering  
 ✅ **Transaction Statistics** - Summary stats and analytics  
@@ -155,7 +155,7 @@ transaction_history/
 1. **Open browser** → `http://localhost:5173`
 2. **Upload PDF** → Click upload zone or drag-drop a bank statement PDF
 3. **View Transactions** → Table appears with extracted transactions
-4. **Filter by Phone** → Use dropdown to filter by phone (stored as local 10-digit `0…`; international numbers from the PDF are normalized to that form)
+4. **Filter by Phone** → Use dropdown to filter transactions by phone number (10 digits starting with 0)
 5. **Sort & Analyze** → Sort by date, amount, or description; view statistics
 
 ## API Endpoints
@@ -179,17 +179,17 @@ transaction_history/
 
 ## Deduplication and `transaction_url`
 
-- **Identity**: The third whitespace-separated token from the transaction-details text (e.g. MPS-style lines: `MPS 254791859862 UCBAV90KI3 …` → `UCBAV90KI3`) is stored as `transaction_url` and treated as the canonical id when present.
-- **On upload**: Rows without a third token are skipped; if `transaction_url` already exists in the database, the row is skipped and tallies are returned in the upload response (`skipped_existing_url`, `skipped_no_url`).
+- **Identity**: From the **first line** of transaction details: MPS-style lines use the **third** token (e.g. `MPS 254791859862 UCBAV90KI3 …` → `UCBAV90KI3`). Lines **without** the `MPS ` prefix use the **second** token (the UD code, e.g. `254… UDH3116RGT …` → `UDH3116RGT`). That value is stored as `transaction_url`.
+- **On upload**: Rows without that token are skipped; if `transaction_url` already exists in the database, the row is skipped and tallies are returned in the upload response (`skipped_existing_url`, `skipped_no_url`).
 - **Database**: A partial unique index on `transaction_url` (where not null) prevents duplicate ids at insert time once the schema is applied.
 - **Existing data**: From `backend/`, run `python scripts/dedupe_transaction_url.py --help`. Typical one-time upgrade: `python scripts/dedupe_transaction_url.py --all` (adds column if needed, drops legacy composite uniqueness, backfills tokens, removes duplicate rows while printing per-key tallies, creates the unique index). Run against your Neon `DATABASE_URL` with the same `.env` as the app.
 
 ## Phone Number Extraction
 
-- **Patterns**: Local `0\d{9}` is preferred; international Kenya MSISDN `254\d{9}` in the details text is accepted and normalized to local form (`0` + the 9 national digits after `254`).
-- **Extraction**: Phone numbers extracted from transactional details text in the PDF.
-- **Storage**: Indexed in database for fast filtering (always local format for consistent lookups).
-- **Examples**: `0766200372` as-is; `254712345678` → stored/searchable as `0712345678`.
+- **Pattern**: `0\d{9}` (10-digit numbers starting with 0)
+- **Extraction**: Phone numbers extracted from "transactional details" column in PDF
+- **Storage**: Indexed in database for fast filtering
+- **Example**: `0766200372` → Extracted and searchable
 
 ## PDF Format Support
 
@@ -208,8 +208,8 @@ See [`backend/models/transaction.py`](backend/models/transaction.py) for the aut
 | `value_date` | Transaction date |
 | `credit` / `debit` | Money in / out |
 | `balance` | Running balance when present |
-| `phone_number` | Local `0\d{9}` for filtering (`254\d{9}` in text normalized to local) |
-| `transaction_url` | Third token from details; **unique** (when not null) for deduplication |
+| `phone_number` | Local `0\d{9}`; `254\d{9}` in text is normalized to the same form |
+| `transaction_url` | MPS: 3rd token on first line; non-MPS: 2nd token (UD code); **unique** (when not null) for deduplication |
 | `statement_id` | Hash-derived id for the source PDF |
 | `raw_data` | JSON from extraction |
 

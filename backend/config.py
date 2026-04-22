@@ -71,6 +71,12 @@ class Config:
         for u in os.getenv('ALLOWED_FIREBASE_UIDS', '').split(',')
         if u.strip()
     ]
+    # Comma-separated Firebase UIDs with full data access privileges.
+    SUPER_ADMIN_UIDS = [
+        u.strip()
+        for u in os.getenv('SUPER_ADMIN_UIDS', '').split(',')
+        if u.strip()
+    ]
 
 
 class DevelopmentConfig(Config):
