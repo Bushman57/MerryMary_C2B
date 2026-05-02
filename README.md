@@ -179,7 +179,7 @@ transaction_history/
 
 ## Deduplication and `transaction_url`
 
-- **Identity**: From the **first line** of transaction details: MPS-style lines use the **third** token (e.g. `MPS 254791859862 UCBAV90KI3 …` → `UCBAV90KI3`). Lines **without** the `MPS ` prefix use the **second** token (the UD code, e.g. `254… UDH3116RGT …` → `UDH3116RGT`). That value is stored as `transaction_url`.
+- **Identity**: From the **first line** of transaction details: MPS-style lines use the **third** token (e.g. `MPS 254791859862 UCBAV90KI3 …` → `UCBAV90KI3`). Lines **without** the `MPS ` prefix use the **second** token (the payment detail code, e.g. `254… UDH3116RGT …` → `UDH3116RGT`, or `254… UE15Q35HHC …` → `UE15Q35HHC`). That value is stored as `transaction_url`.
 - **On upload**: Rows without that token are skipped; if `transaction_url` already exists in the database, the row is skipped and tallies are returned in the upload response (`skipped_existing_url`, `skipped_no_url`).
 - **Database**: A partial unique index on `transaction_url` (where not null) prevents duplicate ids at insert time once the schema is applied.
 - **Existing data**: From `backend/`, run `python scripts/dedupe_transaction_url.py --help`. Typical one-time upgrade: `python scripts/dedupe_transaction_url.py --all` (adds column if needed, drops legacy composite uniqueness, backfills tokens, removes duplicate rows while printing per-key tallies, creates the unique index). Run against your Neon `DATABASE_URL` with the same `.env` as the app.
@@ -198,6 +198,8 @@ The extractor works best with:
 - Standard bank statement format (date, description, amount, balance columns)
 - Single or multi-page statements
 
+Non-`MPS` Equity-style lines must match a **two-letter prefix + 8 alphanumeric** payment code on the same line as a Kenyan phone (e.g. `UD…`, `UE…`). Allowed prefixes are configurable in `backend/.env` via **`TRANSACTION_DETAIL_CODE_PREFIXES`** (comma-separated, default `UD`). For statements that use codes starting with `UE` (or others), set e.g. `TRANSACTION_DETAIL_CODE_PREFIXES=UD,UE` and restart the API.
+
 ## Database Schema
 
 See [`backend/models/transaction.py`](backend/models/transaction.py) for the authoritative model. Notable columns:
@@ -209,7 +211,7 @@ See [`backend/models/transaction.py`](backend/models/transaction.py) for the aut
 | `credit` / `debit` | Money in / out |
 | `balance` | Running balance when present |
 | `phone_number` | Local `0\d{9}`; `254\d{9}` in text is normalized to the same form |
-| `transaction_url` | MPS: 3rd token on first line; non-MPS: 2nd token (UD code); **unique** (when not null) for deduplication |
+| `transaction_url` | MPS: 3rd token on first line; non-MPS: 2nd token (payment detail code); **unique** (when not null) for deduplication |
 | `statement_id` | Hash-derived id for the source PDF |
 | `raw_data` | JSON from extraction |
 
@@ -231,6 +233,7 @@ Fresh installs using [`backend/migrate_direct.py`](backend/migrate_direct.py) ge
 ### "No transactions found"
 - PDF may not have recognized table structure
 - Check that required columns exist (date, description, amount)
+- If lines use a payment code prefix other than `UD` (e.g. `UE15Q35HHC`), add it to **`TRANSACTION_DETAIL_CODE_PREFIXES`** in `backend/.env` (see **PDF Format Support** above)
 
 ### Phone filter shows no results
 - Phone numbers must be exactly 10 digits starting with 0

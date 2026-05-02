@@ -1,3 +1,4 @@
+import os
 import pdfplumber
 import re
 from datetime import datetime
@@ -6,6 +7,38 @@ from pathlib import Path
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+def _build_detail_payment_code_regex() -> re.Pattern:
+    """
+    Equity-style payment refs: two-letter prefix + 8 alphanumeric (e.g. UDGNW142K7, UE15Q35HHC).
+    Prefixes come from TRANSACTION_DETAIL_CODE_PREFIXES (comma-separated), default UD.
+    """
+    raw = os.getenv("TRANSACTION_DETAIL_CODE_PREFIXES", "UD")
+    tokens = [t.strip().upper() for t in raw.split(",") if t.strip()]
+    valid: List[str] = []
+    for t in tokens:
+        if len(t) == 2 and t.isalpha():
+            valid.append(t)
+        else:
+            logger.warning(
+                "Ignoring invalid TRANSACTION_DETAIL_CODE_PREFIXES entry %r "
+                "(expected exactly two letters)",
+                t,
+            )
+    if not valid:
+        logger.warning(
+            "No valid TRANSACTION_DETAIL_CODE_PREFIXES; falling back to UD"
+        )
+        valid = ["UD"]
+    seen = set()
+    unique = []
+    for p in valid:
+        if p not in seen:
+            seen.add(p)
+            unique.append(p)
+    alt = "|".join(re.escape(p) + r"[A-Z0-9]{8}" for p in unique)
+    return re.compile(rf"\b(?:{alt})\b")
 
 
 class PDFParseError(Exception):
@@ -20,8 +53,8 @@ class TransactionExtractor:
     PHONE_REGEX = re.compile(r'\b0\d{9}\b')
     # Same MSISDN in international form without +
     PHONE_REGEX_INTL = re.compile(r'\b254\d{9}\b')
-    # Equity-style payment ref in details, e.g. UDGNW142K7, UDH3116RGT (UD + 8 alnum)
-    DETAIL_UD_CODE = re.compile(r'\bUD[A-Z0-9]{8}\b')
+    # Equity-style payment ref: configurable two-letter prefix + 8 alnum (see TRANSACTION_DETAIL_CODE_PREFIXES)
+    DETAIL_PAYMENT_CODE = _build_detail_payment_code_regex()
     
     # Common date formats in bank statements
     DATE_FORMATS = [
@@ -60,7 +93,7 @@ class TransactionExtractor:
         """True if this line opens a new transaction details block."""
         if line.startswith("MPS "):
             return True
-        if not TransactionExtractor.DETAIL_UD_CODE.search(line):
+        if not TransactionExtractor.DETAIL_PAYMENT_CODE.search(line):
             return False
         return bool(
             TransactionExtractor.PHONE_REGEX.search(line)
@@ -73,8 +106,8 @@ class TransactionExtractor:
         Canonical transaction id token from the first line of transaction details.
 
         MPS-style lines put the id in the third token (e.g. ``MPS 254… UCBAV90KI3``).
-        Equity-style lines without MPS put the UD code in the second token
-        (e.g. ``254… UDH3116RGT 0766…``).
+        Equity-style lines without MPS put the payment detail code in the second token
+        (e.g. ``254… UDH3116RGT 0766…`` or ``254… UE15Q35HHC 0766…``).
         """
         if text is None:
             return None
@@ -406,7 +439,7 @@ class TransactionExtractor:
         Merge multi-line transaction details using known block-start markers.
 
         A new transaction starts when details begin with a known prefix (e.g. MPS),
-        or match Equity-style detail lines (UD code + Kenyan phone). Following
+        or match Equity-style detail lines (payment detail code + Kenyan phone). Following
         rows until the next such line are continuation lines.
         
         Args:
@@ -459,7 +492,7 @@ class TransactionExtractor:
                     has_amount = True
 
             looks_like_equity_detail = bool(
-                TransactionExtractor.DETAIL_UD_CODE.search(details)
+                TransactionExtractor.DETAIL_PAYMENT_CODE.search(details)
                 and (
                     TransactionExtractor.PHONE_REGEX.search(details)
                     or TransactionExtractor.PHONE_REGEX_INTL.search(details)
