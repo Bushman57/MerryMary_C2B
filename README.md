@@ -200,6 +200,8 @@ The extractor works best with:
 
 Non-`MPS` Equity-style lines must match a **two-letter prefix + 8 alphanumeric** payment code on the same line as a Kenyan phone (e.g. `UD…`, `UE…`). Allowed prefixes are configurable in `backend/.env` via **`TRANSACTION_DETAIL_CODE_PREFIXES`** (comma-separated, default `UD`). For statements that use codes starting with `UE` (or others), set e.g. `TRANSACTION_DETAIL_CODE_PREFIXES=UD,UE` and restart the API.
 
+Some layouts start the details line with a **local mobile** `07XXXXXXXX`, then an **opaque unique reference** as the second token (length varies), then the **party phone** as the third token (stored in `phone_number`), e.g. `0731097175 D3LUZATNDH1 0766106345 …`. Enable or disable recognition with **`TRANSACTION_DETAIL_LEADING_07`** (`true` / `false`, default `true`).
+
 ## Database Schema
 
 See [`backend/models/transaction.py`](backend/models/transaction.py) for the authoritative model. Notable columns:
@@ -234,6 +236,7 @@ Fresh installs using [`backend/migrate_direct.py`](backend/migrate_direct.py) ge
 - PDF may not have recognized table structure
 - Check that required columns exist (date, description, amount)
 - If lines use a payment code prefix other than `UD` (e.g. `UE15Q35HHC`), add it to **`TRANSACTION_DETAIL_CODE_PREFIXES`** in `backend/.env` (see **PDF Format Support** above)
+- If detail lines **start with `07` + 8 digits** and a second-token ref but nothing is extracted, ensure **`TRANSACTION_DETAIL_LEADING_07=true`** (default)
 
 ### Phone filter shows no results
 - Phone numbers must be exactly 10 digits starting with 0

@@ -41,6 +41,15 @@ def _build_detail_payment_code_regex() -> re.Pattern:
     return re.compile(rf"\b(?:{alt})\b")
 
 
+def _leading_07_enabled() -> bool:
+    """Allow blocks whose first token is 07XXXXXXXX (second token = opaque unique ref)."""
+    return os.getenv("TRANSACTION_DETAIL_LEADING_07", "true").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+
+
 class PDFParseError(Exception):
     """Custom exception for PDF parsing errors"""
     pass
@@ -55,6 +64,8 @@ class TransactionExtractor:
     PHONE_REGEX_INTL = re.compile(r'\b254\d{9}\b')
     # Equity-style payment ref: configurable two-letter prefix + 8 alnum (see TRANSACTION_DETAIL_CODE_PREFIXES)
     DETAIL_PAYMENT_CODE = _build_detail_payment_code_regex()
+    # Leading-07: first token 07 + 8 digits; second token = unique ref (see TRANSACTION_DETAIL_LEADING_07)
+    LEADING_07_FIRST_TOKEN = re.compile(r"^07\d{8}$")
     
     # Common date formats in bank statements
     DATE_FORMATS = [
@@ -69,15 +80,46 @@ class TransactionExtractor:
         self.transactions = []
     
     @staticmethod
+    def _phone_token_to_local(token: str) -> Optional[str]:
+        """If token is a lone Kenyan MSISDN (local or 254…), return normalized 0XXXXXXXXX."""
+        if not token:
+            return None
+        t = token.strip()
+        if TransactionExtractor.PHONE_REGEX.fullmatch(t):
+            return t
+        if TransactionExtractor.PHONE_REGEX_INTL.fullmatch(t):
+            return "0" + t[3:]
+        return None
+
+    @staticmethod
+    def _leading_07_phone_from_first_line(text: str) -> Optional[str]:
+        """
+        Leading-07 layout: token1 = 07XXXXXXXX, token2 = unique ref, token3 = party phone to store
+        (e.g. ``0731097175 33LV5JPO329 0766106345 …`` → ``0766106345``).
+        """
+        if not _leading_07_enabled() or not text:
+            return None
+        first_line = str(text).split("\n", 1)[0].strip()
+        parts = first_line.split()
+        if len(parts) < 3:
+            return None
+        if not TransactionExtractor.LEADING_07_FIRST_TOKEN.fullmatch(parts[0]):
+            return None
+        return TransactionExtractor._phone_token_to_local(parts[2])
+
+    @staticmethod
     def extract_phone_from_text(text: str) -> Optional[str]:
         """
         Extract Kenyan mobile in local form (0 + 9 digits).
 
-        Prefers a local match (0XXXXXXXXX). Otherwise matches 254XXXXXXXXX
-        and normalizes to local for consistent storage and API lookup.
+        Leading-07 detail lines use the **third** token as the contact phone (not the first).
+        Otherwise prefers the first local match, then 254… normalized to local.
         """
         if not text:
             return None
+        third = TransactionExtractor._leading_07_phone_from_first_line(text)
+        if third:
+            return third
         s = str(text)
         local = TransactionExtractor.PHONE_REGEX.search(s)
         if local:
@@ -89,9 +131,24 @@ class TransactionExtractor:
         return None
 
     @staticmethod
+    def _line_starts_leading_07_block(line: str) -> bool:
+        """
+        Some statements start the details line with a local 07 mobile, then an opaque id
+        (variable length), e.g. ``0731097175 D3LUZATNDH1 0766106345 …``.
+        """
+        if not _leading_07_enabled():
+            return False
+        parts = line.strip().split()
+        if len(parts) < 2:
+            return False
+        return bool(TransactionExtractor.LEADING_07_FIRST_TOKEN.fullmatch(parts[0]))
+
+    @staticmethod
     def _line_starts_transaction_block(line: str) -> bool:
         """True if this line opens a new transaction details block."""
         if line.startswith("MPS "):
+            return True
+        if TransactionExtractor._line_starts_leading_07_block(line):
             return True
         if not TransactionExtractor.DETAIL_PAYMENT_CODE.search(line):
             return False
@@ -106,8 +163,8 @@ class TransactionExtractor:
         Canonical transaction id token from the first line of transaction details.
 
         MPS-style lines put the id in the third token (e.g. ``MPS 254… UCBAV90KI3``).
-        Equity-style lines without MPS put the payment detail code in the second token
-        (e.g. ``254… UDH3116RGT 0766…`` or ``254… UE15Q35HHC 0766…``).
+        Non-MPS lines use the second token: Equity-style (``254… UDH3116RGT 0766…``), or
+        leading-07 format (``0731097175 D3LUZATNDH1 0766…``).
         """
         if text is None:
             return None
@@ -439,7 +496,7 @@ class TransactionExtractor:
         Merge multi-line transaction details using known block-start markers.
 
         A new transaction starts when details begin with a known prefix (e.g. MPS),
-        or match Equity-style detail lines (payment detail code + Kenyan phone). Following
+        or Equity-style / leading-07 detail lines (unique ref + phones). Following
         rows until the next such line are continuation lines.
         
         Args:
@@ -498,9 +555,15 @@ class TransactionExtractor:
                     or TransactionExtractor.PHONE_REGEX_INTL.search(details)
                 )
             )
+            detail_parts = details.split()
+            looks_like_leading_07 = bool(
+                _leading_07_enabled()
+                and len(detail_parts) >= 2
+                and TransactionExtractor.LEADING_07_FIRST_TOKEN.fullmatch(detail_parts[0])
+            )
             starts_with_marker = any(
                 details.startswith(m) for m in start_markers
-            ) or looks_like_equity_detail
+            ) or looks_like_equity_detail or looks_like_leading_07
             looks_like_transaction_start = has_date and has_amount
 
             if starts_with_marker:
